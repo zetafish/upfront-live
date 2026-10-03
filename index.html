@@ -412,6 +412,14 @@ const store = {
   get(k) { try { return localStorage.getItem(k); } catch { return null; } },
   set(k, v) { try { localStorage.setItem(k, v); } catch {} }
 };
+
+// Bezoekers tellen (api/hit.js): één melding per bezoek met een willekeurig id
+// dat in de browser blijft. Geen cookies; lokaal tellen we niet.
+if (!LOCAL) {
+  let id = store.get("lms.visitor");
+  if (!id) { id = crypto.randomUUID?.() ?? String(Math.random()).slice(2) + Date.now(); store.set("lms.visitor", id); }
+  try { navigator.sendBeacon(DATA_URL.replace(/lms-live$/, "hit"), id); } catch {}
+}
 // welke lopers we deze ronde op het parcours zagen; overleeft een herlaad
 const TRAIL = (() => {
   try {

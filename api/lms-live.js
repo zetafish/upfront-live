@@ -11,35 +11,13 @@
 // dezelfde indeling ziet. Zonder Redis werkt alles gewoon, zonder `history`.
 
 import { MID, buildSegs, project, makeLapOf, lapInfo, onCourse } from "../lib/course.js";
+import { redis, hasRedis, CORS } from "./_redis.js";
 
 const UPSTREAM = "https://event.upfront.nl/api/lms-live";
-const REDIS_URL = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
-const REDIS_TOKEN = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
 const TTL = 3 * 3600;          // geschiedenis van een ronde blijft 3 uur bewaard
 const GAP = 5 * 60 * 1000;     // langer niet gekeken: geschiedenis onvolledig
 
-const CORS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, OPTIONS",
-  "Access-Control-Allow-Headers": "*",
-};
-
 let SEGS = null, SEGS_KEY = null;
-
-// Upstash REST: meerdere commando's in één request
-async function redis(cmds) {
-  const res = await fetch(`${REDIS_URL}/pipeline`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${REDIS_TOKEN}` },
-    body: JSON.stringify(cmds),
-    signal: AbortSignal.timeout(2000),
-  });
-  if (!res.ok) throw new Error(`redis HTTP ${res.status}`);
-  return (await res.json()).map(r => {
-    if (r.error) throw new Error(`redis: ${r.error}`);
-    return r.result;
-  });
-}
 
 const toObj = flat => {
   const o = {};
@@ -100,8 +78,8 @@ export async function GET() {
     if (!res.ok) throw new Error(`upstream HTTP ${res.status}`);
     const d = await res.json();
     // status van de geschiedenis in een header: ok, off (geen Redis) of error
-    let hs = REDIS_URL && REDIS_TOKEN ? "skip" : "off";
-    if (REDIS_URL && REDIS_TOKEN && d.ok && d.started && !d.finished) {
+    let hs = hasRedis ? "skip" : "off";
+    if (hasRedis && d.ok && d.started && !d.finished) {
       try { d.history = await history(d, Date.now()); hs = "ok"; }
       catch (e) { hs = "error"; console.error("history:", e.message); }   // zonder geschiedenis verder
     }

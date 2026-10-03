@@ -18,6 +18,8 @@ De API van Upfront stuurt geen CORS-headers mee, dus een browser mag hem niet re
 
 Start en finish zijn hetzelfde punt, dus GPS alleen kan "bijna binnen" niet onderscheiden van "nooit vertrokken". Daarom houdt de functie in Redis (Upstash, via de Vercel-koppeling) per ronde bij wie er op het parcours gezien is en sinds wanneer iemand bij start/finish staat. Die geschiedenis gaat mee als `history`; zonder Redis werkt alles, alleen met minder zekerheid.
 
+Bezoekers tellen: de pagina meldt zich één keer per bezoek bij `api/hit.js` met een willekeurig id uit de browser (geen cookies). Redis telt de unieke ids met een HyperLogLog, per dag en per uur. Het overzicht staat op [`/api/hit`](https://upfront-live.vercel.app/api/hit).
+
 De rekenregels voor positie en rondes staan in `lib/course.js` en worden door de pagina en de functie gedeeld. De indeling zelf (binnen, onderweg, niet vertrokken, uit) gebeurt in de pagina.
 
 Op het gratis Hobby-plan van Vercel hoef je geen betaalgegevens op te geven. Elke kijker telt als edge request (1 miljoen per maand gratis). De pagina ververst elke 15 s, en niet als het tabblad op de achtergrond staat.

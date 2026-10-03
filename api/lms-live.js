@@ -98,18 +98,18 @@ export async function GET() {
     const res = await fetch(UPSTREAM, { headers: { "User-Agent": "lms-live-proxy" } });
     if (!res.ok) throw new Error(`upstream HTTP ${res.status}`);
     const d = await res.json();
-    // TIJDELIJK: status van de geschiedenis (alleen namen van env-variabelen, geen waarden)
-    let hs = "off: " + Object.keys(process.env).filter(n => /KV|REDIS|UPSTASH/i.test(n)).join(",");
+    // status van de geschiedenis in een header: ok, off (geen Redis) of error
+    let hs = REDIS_URL && REDIS_TOKEN ? "skip" : "off";
     if (REDIS_URL && REDIS_TOKEN && d.ok && d.started && !d.finished) {
       try { d.history = await history(d, Date.now()); hs = "ok"; }
-      catch (e) { hs = "error: " + e.message; console.error("history:", e.message); }   // zonder geschiedenis verder
+      catch (e) { hs = "error"; console.error("history:", e.message); }   // zonder geschiedenis verder
     }
     return new Response(JSON.stringify(d), {
       headers: {
         ...CORS,
         "Content-Type": "application/json",
         "Cache-Control": "public, max-age=0, s-maxage=10, stale-while-revalidate=20",
-        "X-LMS-History": hs.slice(0, 300),
+        "X-LMS-History": hs,
       },
     });
   } catch (e) {

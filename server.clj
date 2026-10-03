@@ -1,14 +1,17 @@
 #!/usr/bin/env bb
 ;; Lokale ontwikkelserver voor de Last Man Standing live-pagina.
-;; Serveert index.html en geeft de API van Upfront door met CORS-headers,
-;; net als de Cloudflare Worker online doet.
+;; Serveert index.html en lib/ en geeft de data door met CORS-headers.
+;; De data komt van de Vercel-functie, met de gedeelde geschiedenis uit Redis,
+;; zodat de indeling lokaal gelijk is aan online.
 ;; Start: bb server.clj   -> http://localhost:8787
+;; Rechtstreeks van Upfront (zonder geschiedenis):
+;;   UPSTREAM=https://event.upfront.nl/api/lms-live bb server.clj
 (require '[babashka.http-client :as http]
          '[org.httpkit.server :as server]
          '[clojure.java.io :as io]
          '[clojure.string :as str])
 
-(def api "https://event.upfront.nl/api/lms-live")
+(def api (or (System/getenv "UPSTREAM") "https://upfront-live.vercel.app/api/lms-live"))
 (def port (or (some-> (System/getenv "PORT") parse-long) 8787))
 (def here (-> *file* io/file .getParentFile))
 

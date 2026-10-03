@@ -79,7 +79,7 @@
         too-early? (or (< elapsed 1800) (< elapsed (- avg 300)))
         camp? (and off
                    (or (< along 150) (> along (- lap-m 150)))
-                   (or (< along 150) stale? too-early?)
+                   (or (< along 150) (> off 50) stale? too-early?)
                    (> elapsed (if (> off 50) 300 600)))
         in-lap (cond done? lap-m camp? 0 along along :else 0)
         ;; in officiële km: hele rondes x 6,706 + het deel van de huidige ronde

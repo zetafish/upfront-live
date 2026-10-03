@@ -279,7 +279,7 @@ details.data td, details.data th { padding: 3px 12px 3px 0; }
       <section><h4>Uitgevallen</h4>
         <p>Wie een ronde niet binnen het uur afmaakt, ligt eruit. Officieel telt iemand pas als uitgevallen als de organisatie dat heeft verwerkt. Daarom is ons aantal lopers in de race vaak lager dan het officiële.</p></section>
       <section><h4>Niet vertrokken</h4>
-        <p>Op basis van GPS: wie 5 minuten na de start nog naast het parcours bij start en finish staat, of na 10 minuten nog binnen 150 meter van de start, is niet aan de ronde begonnen. Start en finish zijn hetzelfde punt, dus wie daar later in de ronde staat, telt alleen als bijna binnen als we hem deze ronde op het parcours zagen, of als hij op zijn eigen tempo al binnen kan zijn en zijn tracker nog signaal geeft.</p></section>
+        <p>Op basis van GPS: wie 5 minuten na de start nog naast het parcours bij start en finish staat, of na 10 minuten nog binnen 150 meter van de start, is niet aan de ronde begonnen. Start en finish zijn hetzelfde punt, dus wie daar later in de ronde staat, telt alleen als bijna binnen als hij op het parcours staat (niet ernaast, bij de tenten) en we hem deze ronde op het parcours zagen, of als hij op zijn eigen tempo al binnen kan zijn en zijn tracker nog signaal geeft.</p></section>
       <section><h4>Kilometers</h4>
         <p>We rekenen met de officiële rondeafstand van 6,706 km: 24 rondes zijn precies 100 mijl. De GPS-route in de data is iets korter, omdat GPS bochten afsnijdt. Die gebruiken we alleen om te bepalen hoe ver iemand in de ronde is.</p></section>
       <section><h4>Positie in de ronde</h4>
@@ -377,7 +377,8 @@ function enrich(d, now, trail = null) {
       const pingAt = r.lastPingAt != null ? Date.parse(r.lastPingAt) : null;
       const stalePing = pingAt != null && (pingAt < lapStart || now - pingAt > 300000);
       const tooEarly = elapsed < 1800 || elapsed < avg - 300;
-      const notLeft = along < MID || (!seenLeft && (watched || stuck || stalePing || tooEarly));
+      // wie bijna binnen is, loopt op het parcours; ver ernaast = bij de tenten
+      const notLeft = along < MID || off > 50 || (!seenLeft && (watched || stuck || stalePing || tooEarly));
       if (notLeft && (off > 50 ? elapsed > 300 : elapsed > 600))
         return { ...base, state: "camp", off: Math.round(off) };
       if (notLeft) return { ...base, state: "start", off: Math.round(off) };
@@ -617,6 +618,14 @@ function fieldLaps() {
   return byLap;
 }
 const median = a => a.length ? (a.length % 2 ? a[(a.length - 1) / 2] : (a[a.length / 2 - 1] + a[a.length / 2]) / 2) : null;
+// de huidige ronde loopt nog: alleen de snelsten zijn binnen, dus geen mediaan
+const lapMedian = (field, lap) => lap === D.currentLap ? null : median(field.get(lap) || []);
+// Hoeveel lopers liepen deze ronde? Iedereen start tegelijk, dus wie al binnen
+// is, heeft zijn plaats; in de huidige ronde tellen ook de lopers onderweg mee.
+const IN_LAP = ["done", "running", "start", "unknown"];
+const lapField = (field, lap) => lap === D.currentLap
+  ? D.runners.filter(r => IN_LAP.includes(r.state)).length
+  : (field.get(lap) || []).length;
 const hm = s => { s = Math.round(s / 60); return `${Math.floor(s / 60)}u ${String(s % 60).padStart(2, "0")}m`; };
 const signed = s => (s < 0 ? "−" : "+") + mmss(Math.abs(s));
 const pace = s => `${mmss(s)} /km`;
@@ -640,7 +649,12 @@ function renderDetail() {
   const margin = k ? 3600 - secs.slice(-k).reduce((a, b) => a + b, 0) / k : null;
   const rest = laps.reduce((a, t) => a + Math.max(0, 3600 - t.s), 0);
   const lastAll = laps.length ? field.get(laps.at(-1).lap) || [] : [];
-  const lastPos = laps.length ? [lastAll.indexOf(laps.at(-1).s) + 1, lastAll.length] : null;
+  // positie in de huidige ronde, in de volgorde van de lijst: wie binnen is op
+  // finishtijd, wie onderweg is op afstand. Wie niet meer meedoet: laatste ronde.
+  const inLap = D.runners.filter(x => IN_LAP.includes(x.state));
+  const pos = IN_LAP.includes(r.state)
+    ? { at: inLap.indexOf(r) + 1, of: inLap.length, lap: D.currentLap, label: "Positie deze ronde" }
+    : laps.length ? { at: lastAll.indexOf(laps.at(-1).s) + 1, of: lastAll.length, lap: laps.at(-1).lap, label: "Positie laatste ronde" } : null;
   const avgPace = laps.length ? laps.reduce((a, t) => a + t.pace, 0) / laps.length : null;
 
   $("detailName").textContent = r.name;
@@ -657,7 +671,7 @@ function renderDetail() {
     kpi(margin == null ? "–" : `<span class="${margin < 300 ? "slower" : ""}">${mmss(margin)}</span>`, "Marge",
         margin == null ? "" : `rust per ronde, gem. laatste ${k}`),
     kpi(hm(rest), "Totale rust", "tussen finish en volgende start"),
-    kpi(lastPos ? `${lastPos[0]}<small style="font:500 14px var(--body)"> / ${lastPos[1]}</small>` : "–", "Positie laatste ronde", lastPos ? `ronde ${laps.at(-1).lap}` : ""),
+    kpi(pos ? `${pos.at}<small style="font:500 14px var(--body)"> / ${pos.of}</small>` : "–", pos?.label ?? "Positie", pos ? `ronde ${pos.lap}` : ""),
   ].join("");
 
   const byLap = new Map(r.lapDetail.map(t => [t.lap, t]));
@@ -666,10 +680,10 @@ function renderDetail() {
     const t = byLap.get(k);
     if (!t) return `<tr><td class="num">${k}</td><td colspan="5" class="note">doorkomst niet geregistreerd</td></tr>`;
     if (t.s == null) return `<tr><td class="num">${k}</td><td colspan="5" class="note">tijd onbekend (vorige doorkomst gemist) · binnen om ${new Date(t.at).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" })}</td></tr>`;
-    const all = field.get(t.lap) || [], med = median(all);
+    const all = field.get(t.lap) || [], med = lapMedian(field, t.lap);
     const pos = all.indexOf(t.s) + 1, diff = med == null ? null : t.s - med;
     return `<tr><td class="num">${t.lap}</td><td class="num">${mmss(t.s)}</td><td class="num">${pace(t.pace)}</td>
-      <td class="num">${mmss(Math.max(0, 3600 - t.s))}</td><td class="num pos">${pos} / ${all.length}</td>
+      <td class="num">${mmss(Math.max(0, 3600 - t.s))}</td><td class="num pos">${pos} / ${lapField(field, t.lap)}</td>
       <td class="num ${diff > 0 ? "slower" : "faster"}">${diff == null ? "–" : signed(diff)}</td></tr>`;
   }).reverse().join("");
 
@@ -696,7 +710,7 @@ function drawLapChart(r, field) {
   if (!box) return;
   const laps = r.lapDetail.filter(t => t.s != null);
   if (laps.length < 1) { box.innerHTML = `<p class="note">Nog geen rondetijden.</p>`; return; }
-  const meds = laps.map(t => median(field.get(t.lap) || []));
+  const meds = laps.map(t => lapMedian(field, t.lap));
   const W = Math.max(280, box.clientWidth), H = 260, m = { l: 44, r: 12, t: 14, b: 26 };
   const pw = W - m.l - m.r, ph = H - m.t - m.b;
   const vals = [...laps.map(t => t.s), ...meds.filter(v => v != null)];

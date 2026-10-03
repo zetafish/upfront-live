@@ -28,7 +28,7 @@ Op het gratis Hobby-plan van Vercel hoef je geen betaalgegevens op te geven. Elk
 bb server.clj      # http://localhost:8787
 ```
 
-`server.clj` serveert de pagina en geeft de API door met CORS-headers, net als de Vercel-functie. Op `localhost` gebruikt de pagina automatisch deze server.
+`server.clj` serveert de pagina en haalt de data via de Vercel-functie, met de geschiedenis uit Redis, zodat de indeling lokaal gelijk is aan online. Op `localhost` gebruikt de pagina automatisch deze server. Met `UPSTREAM=https://event.upfront.nl/api/lms-live` haalt hij de data rechtstreeks bij Upfront, zonder geschiedenis.
 
 `bb lms.clj` toont de stand in de terminal (`--all` laat ook uitgevallen lopers zien).
 

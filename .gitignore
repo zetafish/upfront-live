@@ -19,3 +19,8 @@ Session.vim
 
 # Vercel
 .vercel/
+
+# Skills voor AI-assistenten (alleen lokaal)
+.agents/
+.claude/
+skills-lock.json

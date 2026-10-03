@@ -5,7 +5,8 @@
 ;; Start: bb server.clj   -> http://localhost:8787
 (require '[babashka.http-client :as http]
          '[org.httpkit.server :as server]
-         '[clojure.java.io :as io])
+         '[clojure.java.io :as io]
+         '[clojure.string :as str])
 
 (def api "https://event.upfront.nl/api/lms-live")
 (def port (or (some-> (System/getenv "PORT") parse-long) 8787))
@@ -39,6 +40,12 @@
          (catch Exception e
            {:status 502 :headers {"Content-Type" "application/json"}
             :body (str "{\"error\":" (pr-str (str (ex-message e))) "}")}))
+
+    (and (str/starts-with? uri "/lib/") (str/ends-with? uri ".js")
+         (not (str/includes? uri "..")) (.exists (io/file here (subs uri 1))))
+    {:status 200
+     :headers {"Content-Type" "text/javascript; charset=utf-8"}
+     :body (slurp (io/file here (subs uri 1)))}
 
     (#{"/" "/index.html"} uri)
     {:status 200

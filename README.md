@@ -14,7 +14,11 @@ GitHub Pages (index.html) ──fetch──▶ Vercel: api/lms-live.js ──▶
                                       (CDN-cache 10 s)
 ```
 
-De API van Upfront stuurt geen CORS-headers mee, dus een browser mag hem niet rechtstreeks ophalen vanaf een andere site. Een kleine Vercel-functie geeft het antwoord door met CORS-headers. Het CDN van Vercel bewaart het 10 seconden, dus de functie draait hooguit zo'n 6 keer per minuut, hoeveel mensen er ook kijken. Alle berekeningen gebeuren in de pagina zelf.
+De API van Upfront stuurt geen CORS-headers mee, dus een browser mag hem niet rechtstreeks ophalen vanaf een andere site. Een kleine Vercel-functie geeft het antwoord door met CORS-headers. Het CDN van Vercel bewaart het 10 seconden, dus de functie draait hooguit zo'n 6 keer per minuut, hoeveel mensen er ook kijken.
+
+Start en finish zijn hetzelfde punt, dus GPS alleen kan "bijna binnen" niet onderscheiden van "nooit vertrokken". Daarom houdt de functie in Redis (Upstash, via de Vercel-koppeling) per ronde bij wie er op het parcours gezien is en sinds wanneer iemand bij start/finish staat. Die geschiedenis gaat mee als `history`; zonder Redis werkt alles, alleen met minder zekerheid.
+
+De rekenregels voor positie en rondes staan in `lib/course.js` en worden door de pagina en de functie gedeeld. De indeling zelf (binnen, onderweg, niet vertrokken, uit) gebeurt in de pagina.
 
 Op het gratis Hobby-plan van Vercel hoef je geen betaalgegevens op te geven. Elke kijker telt als edge request (1 miljoen per maand gratis). De pagina ververst elke 15 s, en niet als het tabblad op de achtergrond staat.
 

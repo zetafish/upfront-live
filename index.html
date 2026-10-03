@@ -307,7 +307,9 @@ details.data td, details.data th { padding: 3px 12px 3px 0; }
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-<script>
+<script type="module">
+import { MID, buildSegs, project, makeLapOf, lapInfo } from "./lib/course.js";
+
 const $ = id => document.getElementById(id);
 
 // De API van Upfront stuurt geen CORS-headers. Online loopt het via de
@@ -322,34 +324,6 @@ const DATA_URL =
 
 // --- stand berekenen uit de ruwe API-data ----------------------------------
 
-const KX = 111320 * Math.cos(53.37 * Math.PI / 180), KY = 110540;
-const xy = (lat, lng) => [lng * KX, lat * KY];
-
-function buildSegs(points) {
-  const segs = [];
-  for (let i = 1; i < points.length; i++) {
-    const a = points[i - 1], b = points[i];
-    segs.push({ a: xy(a.lat, a.lng), b: xy(b.lat, b.lng), d0: a.dist, d1: b.dist });
-  }
-  return segs;
-}
-
-// Positie langs het parcours. Waar parcoursdelen dicht bij elkaar liggen
-// (zoals start en finish) kiezen we de kandidaat die het best past bij waar de
-// loper op basis van zijn tempo zou moeten zijn.
-function project(segs, lat, lng, expected) {
-  const [px, py] = xy(lat, lng);
-  const cs = segs.map(({ a: [ax, ay], b: [bx, by], d0, d1 }) => {
-    const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
-    const t = l2 === 0 ? 0 : Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / l2));
-    return { along: d0 + t * (d1 - d0), off: Math.hypot(px - (ax + t * dx), py - (ay + t * dy)) };
-  });
-  const best = Math.min(...cs.map(c => c.off));
-  const near = cs.filter(c => c.off <= best + 25);
-  const pick = near.reduce((p, c) => Math.abs(c.along - expected) < Math.abs(p.along - expected) ? c : p);
-  return { along: pick.along, off: best };
-}
-
 let SEGS = null, SEGS_KEY = null;
 
 // trail: per ronde welke lopers we op het parcours zagen (null = geen geschiedenis)
@@ -360,41 +334,12 @@ function enrich(d, now, trail = null) {
   const cur = d.currentLap;
   const lapStart = Date.parse(d.currentLapStartedAt);
   const elapsed = (now - lapStart) / 1000;
-  if (trail && trail.lap !== cur) Object.assign(trail, { lap: cur, since: elapsed, left: new Set() });
+  if (trail && trail.lap !== cur) Object.assign(trail, { lap: cur, since: elapsed, gap: false, left: new Set(), zone: {} });
 
-  const eventStart = Date.parse(d.eventStart);
-  // Bij welke ronde hoort een finish? Het uur waarin hij valt, behalve in de
-  // eerste 30 min: dan is het een te late finish van de ronde ervoor (de
-  // snelste ronde ooit duurt ruim 32 min). Zo tellen we ook rondes mee waarvan
-  // de tijdwaarneming de doorkomst gemist heeft.
-  const lapOf = at => {
-    const e = Date.parse(at) - eventStart, h = Math.floor(e / 3600000) + 1;
-    return (e % 3600000) < 1800000 ? h - 1 : h;
-  };
+  const lapOf = makeLapOf(Date.parse(d.eventStart));
 
   const runners = d.runners.map(r => {
-    let prev = 0;
-    const n = (r.lapTimes || []).length;
-    const lastLap = n ? lapOf(r.lapTimes[n - 1].finishedAt) : 0;
-    const stillIn = r.status === 1 && lastLap >= cur - 1;
-    const lapDetail = (r.lapTimes || []).map((t, i) => {
-      const lap = lapOf(t.finishedAt), gap = lap - prev > 1;
-      prev = lap;
-      // Wie na deze ronde nog een ronde liep, finishte binnen het uur. Een tijd
-      // boven de 60:00 is dan fout: na een gemiste doorkomst telt de API soms
-      // door vanaf een eerdere doorkomst. Alleen de laatste ronde van iemand die
-      // eruit ligt, mag te laat zijn.
-      const bad = t.seconds > 3600 && (i < n - 1 || stillIn);
-      return { lap, s: bad ? null : t.seconds, pace: bad ? null : t.paceSecPerKm, at: t.finishedAt, gap };
-    });
-    const missed = [];
-    for (let k = 1, seen = new Set(lapDetail.map(t => t.lap)); k <= prev; k++) if (!seen.has(k)) missed.push(k);
-    // nog in de race: de laatste finish bepaalt het aantal rondes (wie verder
-    // is, heeft de gemiste rondes ook gelopen); uitgevallen: de API volgen
-    const laps = r.status === 1 ? Math.max(r.laps, prev) : r.laps;
-    const times = lapDetail.filter(t => t.s != null).map(t => t.s);
-    const valid = times.filter(s => s <= 3600);
-    const avg = valid.length ? valid.reduce((a, b) => a + b, 0) / valid.length : 3000;
+    const { lapDetail, missed, laps, times, avg } = lapInfo(r, cur, lapOf);
     const base = {
       bib: r.bib, name: r.name, laps, apiLaps: r.laps, missed, lat: r.lat, lng: r.lng, kmh: r.speedKmh,
       ping: r.lastPingAt, avg: Math.round(avg), lapTimes: times, lapDetail,
@@ -409,23 +354,25 @@ function enrich(d, now, trail = null) {
 
     const expected = Math.min(lapM, lapM * elapsed / avg);
     const { along, off } = project(SEGS, r.lat, r.lng, expected);
-    // start en finish liggen op hetzelfde punt: ver naast het parcours bij
-    // een van beide = in het kamp
     // Start en finish zijn hetzelfde punt: GPS kan "staat bij de finish" niet
     // onderscheiden van "nooit vertrokken". Iemand bij start/finish is niet
-    // vertrokken als we hem deze ronde nog niet op het parcours zagen, en
-    // - we de ronde vanaf het begin volgen, of
+    // vertrokken als hij deze ronde nog niet op het parcours gezien is, en
+    // - de ronde vanaf het begin zonder gaten gevolgd is, of
+    // - hij al meer dan 3 min in de zone staat zonder over de finish te komen, of
     // - zijn tracker sinds de start van de ronde niets meer stuurde, of
     // - hij op eigen tempo nog lang niet binnen kan zijn (of < 30 min: de
     //   snelste ronde duurt ruim 32 min).
-    const midCourse = along >= 150 && along <= lapM - 150;
+    // De geschiedenis komt van de server (gedeeld), anders uit de browser.
+    const midCourse = along >= MID && along <= lapM - MID;
     if (trail && midCourse) trail.left.add(r.bib);
     if (!midCourse) {
       const seenLeft = trail?.left.has(r.bib);
-      const watched = trail != null && trail.since < 300;
+      const watched = trail != null && trail.since < 300 && !trail.gap;
+      const zoneSince = trail?.zone?.[r.bib];
+      const stuck = zoneSince != null && now - zoneSince > 180000;
       const stalePing = r.lastPingAt != null && Date.parse(r.lastPingAt) < lapStart;
       const tooEarly = elapsed < 1800 || elapsed < avg - 300;
-      const notLeft = along < 150 || (!seenLeft && (watched || stalePing || tooEarly));
+      const notLeft = along < MID || (!seenLeft && (watched || stuck || stalePing || tooEarly));
       if (notLeft && (off > 50 ? elapsed > 300 : elapsed > 600))
         return { ...base, state: "camp", off: Math.round(off) };
       if (notLeft) return { ...base, state: "start", off: Math.round(off) };
@@ -458,11 +405,11 @@ const store = {
 const TRAIL = (() => {
   try {
     const t = JSON.parse(store.get("lms.trail") || "null");
-    if (t) return { lap: t.lap, since: t.since, left: new Set(t.left) };
+    if (t) return { lap: t.lap, since: t.since, gap: !!t.gap, lastAt: t.lastAt, left: new Set(t.left), zone: {} };
   } catch {}
-  return { lap: null, since: null, left: new Set() };
+  return { lap: null, since: null, gap: false, lastAt: null, left: new Set(), zone: {} };
 })();
-const saveTrail = () => store.set("lms.trail", JSON.stringify({ lap: TRAIL.lap, since: TRAIL.since, left: [...TRAIL.left] }));
+const saveTrail = () => store.set("lms.trail", JSON.stringify({ lap: TRAIL.lap, since: TRAIL.since, gap: TRAIL.gap, lastAt: TRAIL.lastAt, left: [...TRAIL.left] }));
 let D = null, selected = store.get("lms.sel"), map, courseLine, markers = new Map(), followed = false;
 $("showOut").checked = store.get("lms.showOut") === "1";
 
@@ -952,8 +899,16 @@ async function load() {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const d = await res.json();
     if (d.error || !d.ok) throw new Error(d.error || "API gaf geen stand");
-    D = enrich(d, Date.now(), TRAIL);
-    saveTrail();
+    // gedeelde geschiedenis van de server; zonder die (lokaal, Redis weg) de eigen
+    const h = d.history;
+    const trail = h && h.lap === d.currentLap
+      ? { lap: h.lap, since: h.since, gap: h.gap, left: new Set(h.left), zone: h.zone }
+      : TRAIL;
+    // tabblad op de achtergrond haalt niets op: na een gat van > 5 min is de
+    // eigen geschiedenis van deze ronde onvolledig
+    if (trail === TRAIL && TRAIL.lap === d.currentLap && TRAIL.lastAt && Date.now() - TRAIL.lastAt > 300000) TRAIL.gap = true;
+    D = enrich(d, Date.now(), trail);
+    if (trail === TRAIL) { TRAIL.lastAt = Date.now(); saveTrail(); }
     render();
     const gen = Date.parse(D.generatedAt), age = (Date.now() - gen) / 1000;
     $("updated").innerHTML = age > 120

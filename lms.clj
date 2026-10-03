@@ -35,24 +35,51 @@
                    :off (Math/hypot (- px cx) (- py cy))})))
          (apply min-key :off))))
 
-(def status-name {0 "?" 1 "in race" 3 "uit" 4 "DNS/DNF"})
+(def status-name {0 "niet gestart" 1 "in race" 3 "niet gestart" 4 "uit"})
 (def cur-lap (:currentLap data))
+(def event-start (.toEpochMilli (java.time.Instant/parse (:eventStart data))))
+(def lap-start (.toEpochMilli (java.time.Instant/parse (:currentLapStartedAt data))))
+(def elapsed (/ (- (System/currentTimeMillis) lap-start) 1000.0))
+
+(defn ms [s] (.toEpochMilli (.toInstant (java.time.OffsetDateTime/parse s))))
+
+(defn lap-of
+  "Bij welke ronde hoort een finish? Het uur waarin hij valt, behalve in de
+  eerste 30 min: dan is het een te late finish van de ronde ervoor. Zo tellen
+  rondes mee waarvan de tijdwaarneming de doorkomst gemist heeft."
+  [finished-at]
+  (let [e (- (ms finished-at) event-start)
+        h (inc (quot e 3600000))]
+    (if (< (mod e 3600000) 1800000) (dec h) h)))
+
+(defn laps
+  "Wie nog in de race is, heeft ook de gemiste rondes gelopen: de laatste finish
+  bepaalt het aantal. Uitgevallen lopers: de API volgen."
+  [r]
+  (if (and (= 1 (:status r)) (seq (:lapTimes r)))
+    (max (:laps r) (lap-of (:finishedAt (last (:lapTimes r)))))
+    (:laps r)))
 
 (defn row [r]
-  (let [done? (>= (:laps r) cur-lap)
-        {:keys [along off]} (when (and (:lat r) (not done?) (= 1 (:status r)))
+  (let [n (laps r)
+        in? (= 1 (:status r))
+        done? (>= n cur-lap)
+        out? (or (not in?) (< n (dec cur-lap)))
+        {:keys [along off]} (when (and (:lat r) (not done?) (not out?))
                               (project (:lat r) (:lng r)))
-        in-lap (cond done? lap-m along along :else 0)
-        total-km (/ (+ (* (min (:laps r) (dec cur-lap)) lap-m)
-                       (if (= 1 (:status r)) in-lap 0)) 1000)]
-    {:pos (:pos r) :bib (:bib r) :name (:name r)
-     :status (status-name (:status r) (:status r))
-     :laps (:laps r)
-     :ronde (cond (not= 1 (:status r)) (str "uit in " (:outInLap r))
+        ;; start en finish liggen op hetzelfde punt: ver naast het parcours = kamp
+        camp? (and off (> off 50) (or (< along 150) (> along (- lap-m 150))))
+        in-lap (cond done? lap-m camp? 0 along along :else 0)
+        total-km (/ (+ (* (min n (dec cur-lap)) lap-m) (if out? 0 in-lap)) 1000)]
+    {:bib (:bib r) :name (:name r) :laps n
+     :gemist (when (not= n (:laps r)) (- n (:laps r)))
+     :ronde (cond (not in?) (if (= 4 (:status r)) (str "uit in " (:outInLap r)) (status-name (:status r)))
+                  out? (str "uit na ronde " n)
                   done? "binnen, wacht"
-                  (< (:laps r) (dec cur-lap)) (str "UIT na ronde " (:laps r))
-                  (and (< along 100) (> off 50)) "bij start/kamp, niet gestart?"
+                  camp? (if (> elapsed 300) "niet vertrokken" "bij de start")
                   :else (format "%4.0f%% (%.2f km)" (* 100 (/ in-lap lap-m)) (/ in-lap 1000)))
+     :state (cond out? 3 done? 0 camp? 2 :else 1)
+     :progress (if (and along (not camp?)) along 0)
      :off (when off (Math/round off))
      :kmh (:speedKmh r)
      :totaal (format "%.1f" (double total-km))
@@ -60,13 +87,18 @@
 
 (let [all? (some #{"--all"} *command-line-args*)
       rows (->> (:runners data)
-                (filter #(or all? (= 1 (:status %))))
-                (filter #(or all? (>= (:laps %) (dec cur-lap))))
-                (map row))]
-  (println (format "Ronde %d (gestart %s UTC) | in race %d/%d | data van %s"
-                   cur-lap (subs (:currentLapStartedAt data) 11 16)
+                (map row)
+                (filter #(or all? (< (:state %) 3)))
+                (sort-by (juxt :state #(- (:laps %)) #(- (:progress %)))))
+      in-race (count (filter #(< (:state %) 2) (map row (:runners data))))]
+  (println (format "Ronde %d (gestart %s UTC) | echt in race %d | API zegt %d/%d | data van %s"
+                   cur-lap (subs (:currentLapStartedAt data) 11 16) in-race
                    (:inRace data) (:starters data) (subs (:generatedAt data) 11 19)))
-  (println (format "%-4s %-4s %-28s %-5s %-22s %6s %5s %8s %s" "pos" "bib" "naam" "laps" "huidige ronde" "km/u" "off-m" "tot. km" "ping"))
-  (doseq [{:keys [pos bib name laps ronde kmh off totaal ping]} rows]
-    (println (format "%-4s %-4s %-28s %-5s %-22s %6s %5s %8s %s"
-                     pos bib (subs name 0 (min 28 (count name))) laps ronde kmh (or off "") totaal ping))))
+  (println (format "%-4s %-4s %-28s %-7s %-22s %6s %5s %8s %s" "#" "bib" "naam" "laps" "huidige ronde" "km/u" "off-m" "tot. km" "ping"))
+  (doseq [[i {:keys [bib name laps gemist ronde kmh off totaal ping]}] (map-indexed vector rows)]
+    (println (format "%-4s %-4s %-28s %-7s %-22s %6s %5s %8s %s"
+                     (inc i) bib (subs name 0 (min 28 (count name)))
+                     (str laps (when gemist (str " +" gemist)))
+                     ronde (or kmh "") (or off "") totaal (or ping ""))))
+  (when (some :gemist rows)
+    (println "\n+N = rondes die de tijdwaarneming miste maar wel gelopen zijn")))

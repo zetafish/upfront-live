@@ -310,7 +310,7 @@ details.data td, details.data th { padding: 3px 12px 3px 0; }
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script type="module">
-import { MID, LAP_M, buildSegs, project, makeLapOf, lapInfo } from "./lib/course.js";
+import { MID, LAP_M, buildSegs, project, makeLapOf, lapInfo, onCourse } from "./lib/course.js";
 
 const $ = id => document.getElementById(id);
 
@@ -366,7 +366,7 @@ function enrich(d, now, trail = null) {
     //   snelste ronde duurt ruim 32 min).
     // De geschiedenis komt van de server (gedeeld), anders uit de browser.
     const midCourse = along >= MID && along <= lapM - MID;
-    if (trail && midCourse) trail.left.add(r.bib);
+    if (trail && onCourse(along, off, lapM, r.lastPingAt != null ? Date.parse(r.lastPingAt) : null, lapStart)) trail.left.add(r.bib);
     if (!midCourse) {
       const seenLeft = trail?.left.has(r.bib);
       const watched = trail != null && trail.since < 300 && !trail.gap;

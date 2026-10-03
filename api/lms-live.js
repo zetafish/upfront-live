@@ -10,7 +10,7 @@
 // staat. Die geschiedenis gaat mee als `history`, zodat iedere bezoeker
 // dezelfde indeling ziet. Zonder Redis werkt alles gewoon, zonder `history`.
 
-import { MID, buildSegs, project, makeLapOf, lapInfo } from "../lib/course.js";
+import { MID, buildSegs, project, makeLapOf, lapInfo, onCourse } from "../lib/course.js";
 
 const UPSTREAM = "https://event.upfront.nl/api/lms-live";
 const REDIS_URL = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
@@ -66,10 +66,11 @@ async function history(d, now) {
     if (r.status !== 1 || r.lat == null) continue;
     const { laps, avg } = lapInfo(r, lap, lapOf);
     if (laps !== lap - 1) continue;                       // al binnen, of eruit
-    const { along } = project(SEGS, r.lat, r.lng, Math.min(lapM, lapM * elapsed / avg));
+    const { along, off } = project(SEGS, r.lat, r.lng, Math.min(lapM, lapM * elapsed / avg));
     const mid = along >= MID && along <= lapM - MID;
-    if (mid && !left.has(r.bib)) { newLeft.push(r.bib); left.add(r.bib); }
-    if (mid && zone[r.bib]) { leftZone.push(r.bib); delete zone[r.bib]; }
+    const seen = onCourse(along, off, lapM, r.lastPingAt != null ? Date.parse(r.lastPingAt) : null, lapStart);
+    if (seen && !left.has(r.bib)) { newLeft.push(r.bib); left.add(r.bib); }
+    if (seen && zone[r.bib]) { leftZone.push(r.bib); delete zone[r.bib]; }
     if (!mid && !zone[r.bib]) { newZone.push(r.bib); zone[r.bib] = String(now); }
   }
 

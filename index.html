@@ -21,6 +21,8 @@
   --run: #1c6fb8;         /* Noordzee */
   --late: #c92a2a;
   --camp: #9aa7ad;
+  --c-in: #1c6fb8;        /* grafiek: door naar volgende ronde */
+  --c-out: #e8590c;       /* grafiek: uitgevallen */
   --display: "Big Shoulders Display", "Arial Narrow", Impact, sans-serif;
   --body: "Barlow", "Helvetica Neue", Arial, sans-serif;
   color-scheme: light;
@@ -28,10 +30,12 @@
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
   --bg: #0d171c; --surface: #15232a; --line: #263840; --fg: #e4ecef; --muted: #8fa3ab;
   --accent: #ff7a2e; --done: #4cc38a; --run: #4ea3ec; --late: #ff6b6b; --camp: #5d6f77;
+  --c-in: #3a8bd0; --c-out: #e8641c;
   color-scheme: dark } }
 :root[data-theme="dark"] {
   --bg: #0d171c; --surface: #15232a; --line: #263840; --fg: #e4ecef; --muted: #8fa3ab;
   --accent: #ff7a2e; --done: #4cc38a; --run: #4ea3ec; --late: #ff6b6b; --camp: #5d6f77;
+  --c-in: #3a8bd0; --c-out: #e8641c;
   color-scheme: dark }
 
 * { box-sizing: border-box; }
@@ -105,6 +109,30 @@ svg.spark circle { fill: var(--accent); }
 footer { color: var(--muted); font-size: 13px; }
 footer a { color: inherit; }
 
+.drops { position: relative; }
+.drops svg { display: block; width: 100%; height: auto; overflow: visible; }
+.drops .grid line { stroke: var(--line); stroke-width: 1; }
+.drops .axis text { fill: var(--muted); font: 500 11px var(--body); font-variant-numeric: tabular-nums; }
+.drops .lbl { fill: var(--fg); font: 600 11px var(--body); font-variant-numeric: tabular-nums; }
+.drops .seg-in { fill: var(--c-in); }
+.drops .seg-run { fill: color-mix(in srgb, var(--c-in) 35%, var(--surface)); }
+.drops .seg-out { fill: var(--c-out); }
+.drops .seg-out-now { fill: color-mix(in srgb, var(--c-out) 45%, var(--surface)); }
+.drops .ttl { fill: var(--fg); font: 600 12px var(--body); letter-spacing: .02em; }
+.drops .hit { fill: transparent; cursor: default; }
+.drops .col.hover .hit { fill: color-mix(in srgb, var(--fg) 6%, transparent); }
+.tip { position: absolute; pointer-events: none; background: var(--surface); color: var(--fg); border: 1px solid var(--line);
+  border-radius: 6px; padding: 8px 10px; font-size: 13px; line-height: 1.4; box-shadow: 0 4px 16px rgb(0 0 0 / .12);
+  max-width: 260px; white-space: normal; z-index: 5; }
+.tip b { font-family: var(--display); font-size: 17px; text-transform: uppercase; letter-spacing: .02em; }
+.tip .row { display: flex; justify-content: space-between; gap: 16px; font-variant-numeric: tabular-nums; }
+.tip .names { color: var(--muted); margin-top: 4px; font-size: 12px; }
+.sw { width: 10px; height: 10px; border-radius: 2px; display: inline-block; flex: none; }
+details.data { margin-top: 10px; font-size: 13px; }
+details.data summary { cursor: pointer; color: var(--muted); }
+details.data table { min-width: 0; width: auto; margin-top: 8px; }
+details.data td, details.data th { padding: 3px 12px 3px 0; }
+
 @media (min-width: 900px) { .grid2 { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); } }
 @media (prefers-reduced-motion: no-preference) { .strip .r { transition: left 1.2s ease; } .bar i { transition: width 1.2s ease; } }
 .leaflet-container { font: inherit; }
@@ -144,6 +172,17 @@ footer a { color: inherit; }
       <div id="facts" style="display:grid;gap:10px"></div>
     </section>
   </div>
+
+  <section class="panel">
+    <h2>Uitval per ronde <span id="dropsNote"></span></h2>
+    <div class="drops" id="drops"></div>
+    <div class="legend">
+      <span><i class="sw" style="background:var(--c-in)"></i>ronde gehaald</span>
+      <span><i class="sw" style="background:color-mix(in srgb, var(--c-in) 35%, var(--surface))"></i>nog onderweg (huidige ronde)</span>
+      <span><i class="sw" style="background:var(--c-out)"></i>uitgevallen in deze ronde</span>
+    </div>
+    <details class="data"><summary>Toon als tabel</summary><div class="tablewrap" id="dropsTable"></div></details>
+  </section>
 
   <section class="panel">
     <h2>Klassement <span id="tableNote"></span></h2>
@@ -231,6 +270,8 @@ function enrich(d, now) {
       ping: r.lastPingAt, avg: Math.round(avg), lapTimes: times,
       best: times.length ? Math.min(...times) : null, last: times.at(-1) ?? null,
     };
+    // status 0/3 zonder rondes: niet gestart (telt niet mee als starter)
+    if (r.status !== 1 && r.status !== 4 && r.laps === 0) return { ...base, state: "dns" };
     if (r.status !== 1) return { ...base, state: "out", outLap: r.outInLap ?? r.laps + 1 };
     if (r.laps >= cur) return { ...base, state: "done", progress: 1 };
     if (r.laps < cur - 1) return { ...base, state: "out", outLap: r.laps + 1 };
@@ -247,7 +288,7 @@ function enrich(d, now) {
              eta: eta == null ? null : Math.round(eta), late: eta != null && elapsed + eta > 3600 };
   });
 
-  const order = { done: 0, running: 1, start: 2, camp: 3, unknown: 4, out: 5 };
+  const order = { done: 0, running: 1, start: 2, camp: 3, unknown: 4, out: 5, dns: 6 };
   runners.sort((a, b) =>
     order[a.state] - order[b.state] || b.laps - a.laps ||
     (b.progress ?? 0) - (a.progress ?? 0) || (a.last ?? 99999) - (b.last ?? 99999));
@@ -315,6 +356,7 @@ function drawMap() {
   for (const r of D.runners) {
     if (r.lat == null) continue;
     const showOut = $("showOut").checked;
+    if (r.state === "dns") continue;
     if (r.state === "out" && !showOut && r.bib !== selected) continue;
     seen.add(r.bib);
     const sel = r.bib === selected;
@@ -406,6 +448,7 @@ function statusCell(r) {
     case "running": return `<div class="prog"><div class="bar"><i style="width:${(r.progress * 100).toFixed(1)}%"></i></div><em>${Math.round(r.progress * 100)}%${r.eta != null ? ` · ${mmss(r.eta)}` : ""}</em></div>`;
     case "camp": return `<span class="pill camp">niet vertrokken (${r.off} m van parcours)</span>`;
     case "start": return `<span class="pill start">bij de start</span>`;
+    case "dns": return `<span class="pill out">niet gestart</span>`;
     case "out": return `<span class="pill out">uit in ronde ${r.outLap}</span>`;
     default: return `<span class="pill unknown">geen GPS</span>`;
   }
@@ -415,11 +458,11 @@ function renderTable() {
   const q = $("q").value.trim().toLowerCase(), showOut = $("showOut").checked;
   let n = 0;
   const rows = D.runners.filter(r => {
-    if (r.state === "out" && !showOut && !q) return false;
+    if ((r.state === "out" || r.state === "dns") && !showOut && !q) return false;
     return !q || r.name.toLowerCase().includes(q) || r.bib.includes(q);
   }).map(r => {
-    const pos = r.state === "out" ? "" : ++n;
-    return `<tr data-bib="${esc(r.bib)}" tabindex="0" class="${r.state === "out" ? "out" : ""} ${r.late ? "late" : ""} ${r.bib === selected ? "sel" : ""}">
+    const pos = r.state === "out" || r.state === "dns" ? "" : ++n;
+    return `<tr data-bib="${esc(r.bib)}" tabindex="0" class="${r.state === "out" || r.state === "dns" ? "out" : ""} ${r.late ? "late" : ""} ${r.bib === selected ? "sel" : ""}">
       <td class="num">${pos}</td><td class="bib">${esc(r.bib)}</td><td class="name">${esc(r.name)}</td>
       <td class="num">${r.laps}</td><td>${statusCell(r)}</td><td class="num">${km(totalMeters(r))}</td>
       <td class="num">${r.last ? mmss(r.last) : "–"}</td><td class="num">${r.best ? mmss(r.best) : "–"}</td>
@@ -442,7 +485,132 @@ function select(bib) {
   if (map && r?.lat != null) map.setView([r.lat, r.lng], Math.max(map.getZoom(), 15));
 }
 
-function render() { renderClock(); renderSummary(); renderStrip(); renderFacts(); renderTable(); drawMap(); }
+// --- uitval per ronde ---------------------------------------------------------
+
+function dropStats() {
+  const field = D.runners.filter(r => r.state !== "dns");
+  const cur = D.currentLap, laps = [];
+  for (let k = 1; k <= cur; k++) {
+    const finished = field.filter(r => r.laps >= k);
+    const out = field.filter(r =>
+      (r.state === "out" && r.outLap === k) || (k === cur && r.state === "camp"));
+    const running = k === cur ? field.filter(r => ["running", "start", "unknown"].includes(r.state)) : [];
+    laps.push({ lap: k, finished: finished.length, running: running.length, out,
+                started: finished.length + running.length + out.length, current: k === cur });
+  }
+  return { starters: field.length, laps };
+}
+
+function niceStep(max) {
+  for (const s of [5, 10, 20, 25, 50, 100, 200]) if (max / s <= 5) return s;
+  return 500;
+}
+
+function renderDrops() {
+  const box = $("drops"), { starters, laps } = dropStats();
+  const W = Math.max(280, box.clientWidth);
+  // twee panelen met dezelfde x-as: uitval (boven) en nog in de race (onder)
+  const m = { l: 34, r: 6 }, pw = W - m.l - m.r;
+  const A = { t: 22, h: 150 }, B = { t: 22 + 150 + 34, h: 90 }, H = B.t + B.h + 22;
+  const maxOut = Math.max(1, ...laps.map(l => l.out.length));
+  const stepA = niceStep(maxOut), yA = Math.ceil(maxOut / stepA) * stepA;
+  const stepB = niceStep(starters) * 2 > starters ? niceStep(starters) : niceStep(starters) * 2;
+  const yB = Math.ceil(starters / stepB) * stepB;
+  const ya = v => A.t + A.h - v / yA * A.h, yb = v => B.t + B.h - v / yB * B.h;
+  const bw = pw / laps.length, barW = Math.max(1, bw - 2);
+  const xEvery = bw >= 20 ? 1 : bw >= 10 ? 2 : 5;
+  const labelAll = bw >= 16;
+  const top3 = new Set([...laps].sort((a, b) => b.out.length - a.out.length).slice(0, 3).filter(l => l.out.length).map(l => l.lap));
+
+  // rechthoek met afgeronde bovenhoeken, staand op de basislijn
+  const bar = (cls, x, y0, w, h) => {
+    if (h <= 0) return "";
+    const r = Math.min(4, w / 2, h);
+    return `<path class="${cls}" d="M${x},${y0 + h}V${y0 + r}Q${x},${y0} ${x + r},${y0}H${x + w - r}Q${x + w},${y0} ${x + w},${y0 + r}V${y0 + h}Z"/>`;
+  };
+
+  let grid = "", axis = "", cols = "";
+  for (let v = 0; v <= yA; v += stepA) {
+    grid += `<line x1="${m.l}" x2="${W - m.r}" y1="${ya(v)}" y2="${ya(v)}"/>`;
+    axis += `<text x="${m.l - 6}" y="${ya(v) + 4}" text-anchor="end">${v}</text>`;
+  }
+  for (let v = 0; v <= yB; v += stepB) {
+    grid += `<line x1="${m.l}" x2="${W - m.r}" y1="${yb(v)}" y2="${yb(v)}"/>`;
+    axis += `<text x="${m.l - 6}" y="${yb(v) + 4}" text-anchor="end">${v}</text>`;
+  }
+  axis += `<text class="ttl" x="${m.l}" y="${A.t - 10}">Uitgevallen per ronde</text>`;
+  axis += `<text class="ttl" x="${m.l}" y="${B.t - 10}">Nog in de race na de ronde</text>`;
+
+  laps.forEach((l, i) => {
+    const x = m.l + i * bw + 1, cx = x + barW / 2;
+    if (l.lap % xEvery === 0 || l.lap === 1 || l.current)
+      axis += `<text x="${cx}" y="${H - 6}" text-anchor="middle">${l.lap}</text>`;
+    // boven: uitval (huidige ronde lichter: nog niet af)
+    let s = bar(l.current ? "seg-out-now" : "seg-out", x, ya(l.out.length), barW, A.t + A.h - ya(l.out.length));
+    if (l.out.length && (labelAll || top3.has(l.lap)))
+      s += `<text class="lbl" x="${cx}" y="${ya(l.out.length) - 5}" text-anchor="middle">${l.out.length}</text>`;
+    // onder: nog in de race; huidige ronde = binnen + onderweg
+    const runTop = yb(l.finished + l.running), finTop = yb(l.finished);
+    if (l.current) {
+      s += bar("seg-run", x, runTop, barW, B.t + B.h - runTop);
+      if (l.finished) s += `<rect class="seg-in" x="${x}" y="${finTop}" width="${barW}" height="${B.t + B.h - finTop}"/>`;
+    } else s += bar("seg-in", x, finTop, barW, B.t + B.h - finTop);
+    if (l.lap === 1 || l.current || i === laps.length - 2)
+      s += `<text class="lbl" x="${cx}" y="${runTop - 5}" text-anchor="middle">${l.finished + l.running}</text>`;
+    cols += `<g class="col" data-i="${i}" tabindex="0" aria-label="Ronde ${l.lap}: ${l.out.length} uitgevallen, ${l.finished} gehaald">
+      <rect class="hit" x="${m.l + i * bw}" y="${A.t - 4}" width="${bw}" height="${B.t + B.h - A.t + 4}"/>${s}</g>`;
+  });
+
+  box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img"
+      aria-label="Uitval per ronde en aantal lopers dat nog in de race is">
+    <g class="grid">${grid}</g><g class="axis">${axis}</g>${cols}</svg><div class="tip" hidden></div>`;
+
+  const tip = box.querySelector(".tip");
+  const show = g => {
+    box.querySelectorAll(".col.hover").forEach(n => n.classList.remove("hover"));
+    g.classList.add("hover");
+    const l = laps[+g.dataset.i];
+    const names = l.out.map(r => r.name);
+    const row = (sw, k, v) => `<div class="row"><span>${sw ? `<i class="sw" style="background:${sw}"></i> ` : ""}${k}</span><span>${v}</span></div>`;
+    tip.innerHTML = `<b>Ronde ${l.lap}${l.current ? " · bezig" : ""}</b>
+      ${row("", "Gestart", l.started)}
+      ${row("var(--c-out)", l.current ? "Niet gestart / uit" : "Uitgevallen", l.out.length)}
+      ${row("var(--c-in)", l.current ? "Binnen" : "Gehaald", l.finished)}
+      ${l.current ? row("color-mix(in srgb, var(--c-in) 35%, var(--surface))", "Onderweg", l.running) : ""}
+      ${names.length ? `<div class="names">${esc(names.slice(0, 10).join(", "))}${names.length > 10 ? ` en ${names.length - 10} anderen` : ""}</div>` : ""}`;
+    tip.hidden = false;
+    const bx = box.getBoundingClientRect(), gr = g.querySelector(".hit").getBoundingClientRect();
+    const tw = tip.offsetWidth;
+    let left = gr.left - bx.left + gr.width / 2 + 14;
+    if (left + tw > bx.width) left = gr.left - bx.left + gr.width / 2 - tw - 14;
+    tip.style.left = Math.max(0, left) + "px";
+    tip.style.top = (A.t + 4) + "px";
+  };
+  const hide = () => { tip.hidden = true; box.querySelectorAll(".col.hover").forEach(n => n.classList.remove("hover")); };
+  box.querySelectorAll(".col").forEach(g => {
+    g.addEventListener("mouseenter", () => show(g));
+    g.addEventListener("focus", () => show(g));
+    g.addEventListener("blur", hide);
+  });
+  box.querySelector("svg").addEventListener("mouseleave", hide);
+
+  const done = laps.filter(l => !l.current);
+  const worst = done.reduce((a, b) => b.out.length > (a?.out.length ?? 0) ? b : a, null);
+  const alive = laps.at(-1).finished + laps.at(-1).running;
+  $("dropsNote").textContent = `${starters} gestart · ${alive} nog in de race` +
+    (worst?.out.length ? ` · meeste uitval in ronde ${worst.lap} (${worst.out.length})` : "");
+
+  $("dropsTable").innerHTML = `<table><thead><tr><th class="num">Ronde</th><th class="num">Gestart</th>
+    <th class="num">Uitgevallen</th><th class="num">Gehaald</th></tr></thead><tbody>${
+    laps.map(l => `<tr><td class="num">${l.lap}${l.current ? " (bezig)" : ""}</td><td class="num">${l.started}</td>
+      <td class="num">${l.out.length}</td><td class="num">${l.current ? `${l.finished} + ${l.running} onderweg` : l.finished}</td></tr>`).join("")
+  }</tbody></table>`;
+}
+
+let dropsW = 0;
+new ResizeObserver(() => { const w = $("drops").clientWidth; if (D && w !== dropsW) { dropsW = w; renderDrops(); } }).observe($("drops"));
+
+function render() { renderClock(); renderSummary(); renderStrip(); renderFacts(); renderDrops(); renderTable(); drawMap(); }
 
 async function load() {
   try {

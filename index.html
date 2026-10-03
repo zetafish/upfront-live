@@ -279,7 +279,7 @@ details.data td, details.data th { padding: 3px 12px 3px 0; }
       <section><h4>Uitgevallen</h4>
         <p>Wie een ronde niet binnen het uur afmaakt, ligt eruit. Officieel telt iemand pas als uitgevallen als de organisatie dat heeft verwerkt. Daarom is ons aantal lopers in de race vaak lager dan het officiële.</p></section>
       <section><h4>Niet vertrokken</h4>
-        <p>Op basis van GPS: wie 5 minuten na de start nog naast het parcours bij start en finish staat, of na 10 minuten nog binnen 150 meter van de start, is niet aan de ronde begonnen.</p></section>
+        <p>Op basis van GPS: wie 5 minuten na de start nog naast het parcours bij start en finish staat, of na 10 minuten nog binnen 150 meter van de start, is niet aan de ronde begonnen. Start en finish zijn hetzelfde punt, dus wie daar later in de ronde staat, telt alleen als bijna binnen als we hem deze ronde op het parcours zagen, of als hij op zijn eigen tempo al binnen kan zijn.</p></section>
       <section><h4>Positie in de ronde</h4>
         <p>De GPS-positie, geprojecteerd op het parcours. GPS kan tientallen meters afwijken, en een tracker die stilstaat of geen bereik heeft, geeft een oude positie.</p></section>
       <section><h4>Resterende tijd en te laat</h4>
@@ -352,13 +352,15 @@ function project(segs, lat, lng, expected) {
 
 let SEGS = null, SEGS_KEY = null;
 
-function enrich(d, now) {
+// trail: per ronde welke lopers we op het parcours zagen (null = geen geschiedenis)
+function enrich(d, now, trail = null) {
   const lapM = d.course.distance;
   const key = d.course.points.length + ":" + lapM;
   if (SEGS_KEY !== key) { SEGS = buildSegs(d.course.points); SEGS_KEY = key; }
   const cur = d.currentLap;
   const lapStart = Date.parse(d.currentLapStartedAt);
   const elapsed = (now - lapStart) / 1000;
+  if (trail && trail.lap !== cur) Object.assign(trail, { lap: cur, since: elapsed, left: new Set() });
 
   const eventStart = Date.parse(d.eventStart);
   // Bij welke ronde hoort een finish? Het uur waarin hij valt, behalve in de
@@ -409,10 +411,25 @@ function enrich(d, now) {
     const { along, off } = project(SEGS, r.lat, r.lng, expected);
     // start en finish liggen op hetzelfde punt: ver naast het parcours bij
     // een van beide = in het kamp
-    if (off > 50 && (along < 150 || along > lapM - 150))
-      return { ...base, state: elapsed > 300 ? "camp" : "start", off: Math.round(off) };
-    // na 10 min nog bij de start (ook al is dat op het parcours): niet vertrokken
-    if (along < 150 && elapsed > 600) return { ...base, state: "camp", off: Math.round(off) };
+    // Start en finish zijn hetzelfde punt: GPS kan "staat bij de finish" niet
+    // onderscheiden van "nooit vertrokken". Iemand bij start/finish is niet
+    // vertrokken als we hem deze ronde nog niet op het parcours zagen, en
+    // - we de ronde vanaf het begin volgen, of
+    // - zijn tracker sinds de start van de ronde niets meer stuurde, of
+    // - hij op eigen tempo nog lang niet binnen kan zijn (of < 30 min: de
+    //   snelste ronde duurt ruim 32 min).
+    const midCourse = along >= 150 && along <= lapM - 150;
+    if (trail && midCourse) trail.left.add(r.bib);
+    if (!midCourse) {
+      const seenLeft = trail?.left.has(r.bib);
+      const watched = trail != null && trail.since < 300;
+      const stalePing = r.lastPingAt != null && Date.parse(r.lastPingAt) < lapStart;
+      const tooEarly = elapsed < 1800 || elapsed < avg - 300;
+      const notLeft = along < 150 || (!seenLeft && (watched || stalePing || tooEarly));
+      if (notLeft && (off > 50 ? elapsed > 300 : elapsed > 600))
+        return { ...base, state: "camp", off: Math.round(off) };
+      if (notLeft) return { ...base, state: "start", off: Math.round(off) };
+    }
     // Resterende tijd: in het eerste kwart is het tempo van deze ronde nog
     // niet betrouwbaar (wandelen vanaf de start), dus dan het eigen gemiddelde.
     const progress = along / lapM;
@@ -437,6 +454,15 @@ const store = {
   get(k) { try { return localStorage.getItem(k); } catch { return null; } },
   set(k, v) { try { localStorage.setItem(k, v); } catch {} }
 };
+// welke lopers we deze ronde op het parcours zagen; overleeft een herlaad
+const TRAIL = (() => {
+  try {
+    const t = JSON.parse(store.get("lms.trail") || "null");
+    if (t) return { lap: t.lap, since: t.since, left: new Set(t.left) };
+  } catch {}
+  return { lap: null, since: null, left: new Set() };
+})();
+const saveTrail = () => store.set("lms.trail", JSON.stringify({ lap: TRAIL.lap, since: TRAIL.since, left: [...TRAIL.left] }));
 let D = null, selected = store.get("lms.sel"), map, courseLine, markers = new Map(), followed = false;
 $("showOut").checked = store.get("lms.showOut") === "1";
 
@@ -518,16 +544,16 @@ function renderClock() {
 
 function renderSummary() {
   const c = s => D.runners.filter(r => r.state === s).length;
-  const running = c("running"), late = D.runners.filter(r => r.state === "running" && r.late).length;
+  // in de eerste 10 min staat iedereen nog bij de start: die tellen als onderweg
+  const running = c("running") + c("start") + c("unknown"), late = D.runners.filter(r => r.state === "running" && r.late).length;
   const alive = c("done") + running;
   $("summary").innerHTML = `
     <span class="chip" style="font-size:16px">${alive} nog in de race</span>
     <span class="chip"><i class="dot" style="background:var(--done)"></i>${c("done")} binnen</span>
     <span class="chip"><i class="dot" style="background:var(--run)"></i>${running} onderweg</span>
     ${late ? `<span class="chip"><i class="dot" style="background:var(--late)"></i>${late} te laat op dit tempo</span>` : ""}
-    ${c("camp") + c("start") ? `<span class="chip"><i class="dot" style="background:var(--camp)"></i>${c("camp") + c("start")} niet vertrokken</span>` : ""}
-    <span class="chip">${c("out")} uit</span>
-    <span class="note">API zegt ${D.apiInRace} in race van ${D.starters} starters</span>`;
+    ${c("camp") ? `<span class="chip"><i class="dot" style="background:var(--camp)"></i>${c("camp")} niet vertrokken</span>` : ""}
+    <span class="chip">${c("out")} uit</span>`;
 }
 
 function renderStrip() {
@@ -926,7 +952,8 @@ async function load() {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const d = await res.json();
     if (d.error || !d.ok) throw new Error(d.error || "API gaf geen stand");
-    D = enrich(d, Date.now());
+    D = enrich(d, Date.now(), TRAIL);
+    saveTrail();
     render();
     const gen = Date.parse(D.generatedAt), age = (Date.now() - gen) / 1000;
     $("updated").innerHTML = age > 120

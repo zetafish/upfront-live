@@ -3,8 +3,7 @@
 ;; Gebruik: bb lms.clj            (alle lopers in de race)
 ;;          bb lms.clj --all      (ook uitgevallen lopers)
 (require '[babashka.http-client :as http]
-         '[cheshire.core :as json]
-         '[clojure.string :as str])
+         '[cheshire.core :as json])
 
 (def data (-> (http/get "https://event.upfront.nl/api/lms-live")
               :body (json/parse-string true)))
@@ -67,10 +66,18 @@
         out? (or (not in?) (< n (dec cur-lap)))
         {:keys [along off]} (when (and (:lat r) (not done?) (not out?))
                               (project (:lat r) (:lng r)))
-        ;; start en finish liggen op hetzelfde punt: ver naast het parcours = kamp
-        ;; en na 10 min nog bij de start (ook op het parcours) = niet vertrokken
-        camp? (and off (or (and (> off 50) (or (< along 150) (> along (- lap-m 150))))
-                           (and (< along 150) (> elapsed 600))))
+        ;; Start en finish liggen op hetzelfde punt. Bij start/finish = niet
+        ;; vertrokken als de tracker sinds de start van de ronde niets stuurde, of
+        ;; als de loper op eigen tempo nog lang niet binnen kan zijn (en < 30 min:
+        ;; de snelste ronde duurt ruim 32 min).
+        valid (->> (:lapTimes r) (map :seconds) (filter #(<= % 3600)))
+        avg (if (seq valid) (/ (reduce + valid) (count valid)) 3000)
+        stale? (some-> (:lastPingAt r) ms (< lap-start))
+        too-early? (or (< elapsed 1800) (< elapsed (- avg 300)))
+        camp? (and off
+                   (or (< along 150) (> along (- lap-m 150)))
+                   (or (< along 150) stale? too-early?)
+                   (> elapsed (if (> off 50) 300 600)))
         in-lap (cond done? lap-m camp? 0 along along :else 0)
         total-km (/ (+ (* (min n (dec cur-lap)) lap-m) (if out? 0 in-lap)) 1000)]
     {:bib (:bib r) :name (:name r) :laps n
@@ -80,7 +87,8 @@
                   done? "binnen, wacht"
                   camp? (if (> elapsed 300) "niet vertrokken" "bij de start")
                   :else (format "%4.0f%% (%.2f km)" (* 100 (/ in-lap lap-m)) (/ in-lap 1000)))
-     :state (cond out? 3 done? 0 camp? 2 :else 1)
+     ;; in de eerste minuten staat iedereen bij de start: dat telt als in de race
+     :state (cond out? 3 done? 0 (and camp? (> elapsed 300)) 2 :else 1)
      :progress (if (and along (not camp?)) along 0)
      :off (when off (Math/round off))
      :kmh (:speedKmh r)

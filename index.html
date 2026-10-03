@@ -889,7 +889,7 @@ function renderDrops() {
       s += bar("seg-run", x, runTop, barW, B.t + B.h - runTop);
       if (l.finished) s += `<rect class="seg-in" x="${x}" y="${finTop}" width="${barW}" height="${B.t + B.h - finTop}"/>`;
     } else s += bar("seg-in", x, finTop, barW, B.t + B.h - finTop);
-    if (l.lap === 1 || l.current || i === laps.length - 2)
+    if (l.lap === 1 || l.current || (i === laps.length - 2 && bw >= 16))
       s += `<text class="lbl" x="${cx}" y="${runTop - 5}" text-anchor="middle">${l.finished + l.running}</text>`;
     cols += `<g class="col" data-i="${i}" tabindex="0" aria-label="Ronde ${l.lap}: ${l.out.length} uitgevallen, ${l.finished} gehaald">
       <rect class="hit" x="${m.l + i * bw}" y="${A.t - 4}" width="${bw}" height="${B.t + B.h - A.t + 4}"/>${s}</g>`;

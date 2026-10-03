@@ -1,0 +1,477 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Last Man Standing Live</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800&family=Barlow:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+/* Layout: wedstrijdbord. Klok en ronde bovenaan, dan waar het veld nu is
+   (strook 0–6,6 km + kaart), daaronder het volledige klassement. */
+:root {
+  --bg: #eef1f2;          /* zeemist */
+  --surface: #ffffff;
+  --line: #d3dadd;
+  --fg: #142229;          /* wad-leisteen */
+  --muted: #5b6d75;
+  --accent: #e8590c;      /* Brandaris-oranje */
+  --done: #2b8a5e;        /* helm-groen */
+  --run: #1c6fb8;         /* Noordzee */
+  --late: #c92a2a;
+  --camp: #9aa7ad;
+  --display: "Big Shoulders Display", "Arial Narrow", Impact, sans-serif;
+  --body: "Barlow", "Helvetica Neue", Arial, sans-serif;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0d171c; --surface: #15232a; --line: #263840; --fg: #e4ecef; --muted: #8fa3ab;
+  --accent: #ff7a2e; --done: #4cc38a; --run: #4ea3ec; --late: #ff6b6b; --camp: #5d6f77;
+  color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0d171c; --surface: #15232a; --line: #263840; --fg: #e4ecef; --muted: #8fa3ab;
+  --accent: #ff7a2e; --done: #4cc38a; --run: #4ea3ec; --late: #ff6b6b; --camp: #5d6f77;
+  color-scheme: dark }
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.45 var(--body); }
+.wrap { max-width: 1200px; margin: 0 auto; padding-inline: 16px; padding-block: 20px 48px; display: grid; gap: 20px; }
+
+header { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px 24px; }
+h1 { font: 800 clamp(30px, 6vw, 52px)/0.95 var(--display); letter-spacing: .01em; margin: 0; text-transform: uppercase; text-wrap: balance; }
+h1 small { display: block; font: 600 13px/1 var(--body); letter-spacing: .14em; color: var(--muted); margin-bottom: 6px; }
+.clock { display: flex; gap: 22px; flex-wrap: wrap; }
+.clock div { display: grid; }
+.clock b { font: 800 40px/1 var(--display); font-variant-numeric: tabular-nums; }
+.clock .lap b { color: var(--accent); }
+.label { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+
+.summary { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.chip { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; background: var(--surface); border: 1px solid var(--line); font-weight: 600; font-variant-numeric: tabular-nums; }
+.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex: none; }
+.note { color: var(--muted); font-size: 13px; }
+
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px; min-width: 0; }
+.panel h2 { font: 800 20px/1 var(--display); text-transform: uppercase; letter-spacing: .03em; margin: 0 0 12px; display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.panel h2 span { font: 500 13px var(--body); text-transform: none; letter-spacing: 0; color: var(--muted); }
+
+.strip { position: relative; height: 92px; margin: 8px 6px 4px; }
+.strip .track { position: absolute; left: 0; right: 0; top: 46px; height: 4px; background: var(--line); border-radius: 2px; }
+.strip .tick { position: absolute; top: 56px; font-size: 11px; color: var(--muted); transform: translateX(-50%); font-variant-numeric: tabular-nums; }
+.strip .tick::before { content: ""; position: absolute; left: 50%; top: -10px; width: 1px; height: 6px; background: var(--muted); }
+.strip .r { position: absolute; width: 10px; height: 10px; border-radius: 50%; transform: translate(-50%, -50%); background: var(--run); border: 1.5px solid var(--surface); cursor: pointer; }
+.strip .r.late { background: var(--late); }
+.strip .r.sel { outline: 2px solid var(--accent); outline-offset: 1px; z-index: 2; }
+.strip .finish { position: absolute; right: -6px; top: 22px; font-size: 11px; color: var(--done); font-weight: 600; }
+
+.grid2 { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; }
+#map { height: 420px; border-radius: 6px; background: var(--bg); }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 13px; color: var(--muted); margin-top: 10px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+
+.controls { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; margin-bottom: 12px; }
+input[type="search"] { font: inherit; padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); min-width: 0; width: 220px; max-width: 100%; }
+input:focus-visible, button:focus-visible, tr:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+label.toggle { display: inline-flex; gap: 6px; align-items: center; font-size: 14px; color: var(--muted); cursor: pointer; }
+
+.tablewrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; min-width: 760px; }
+th { text-align: left; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); font-weight: 600; padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+td { padding: 7px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+tbody tr { cursor: pointer; }
+tbody tr:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); }
+tbody tr.sel { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+tbody tr.out td { color: var(--muted); }
+td.num, th.num { text-align: right; }
+td.name { font-weight: 600; white-space: normal; min-width: 160px; }
+td.bib { color: var(--muted); }
+
+.pill { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; padding: 2px 9px; border-radius: 999px; }
+.pill.done { color: var(--done); background: color-mix(in srgb, var(--done) 14%, transparent); }
+.pill.camp, .pill.start, .pill.unknown { color: var(--muted); background: color-mix(in srgb, var(--camp) 18%, transparent); }
+.pill.out { color: var(--muted); }
+.prog { display: flex; align-items: center; gap: 8px; min-width: 170px; }
+.bar { flex: 1; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--run); }
+.late .bar i { background: var(--late); }
+.prog em { font-style: normal; font-size: 13px; color: var(--muted); width: 74px; text-align: right; }
+.late .prog em { color: var(--late); font-weight: 600; }
+svg.spark { display: block; }
+svg.spark polyline { fill: none; stroke: var(--muted); stroke-width: 1.3; }
+svg.spark circle { fill: var(--accent); }
+
+.err { color: var(--late); font-weight: 600; }
+footer { color: var(--muted); font-size: 13px; }
+footer a { color: inherit; }
+
+@media (min-width: 900px) { .grid2 { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); } }
+@media (prefers-reduced-motion: no-preference) { .strip .r { transition: left 1.2s ease; } .bar i { transition: width 1.2s ease; } }
+.leaflet-container { font: inherit; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1><small>Upfront · Terschelling</small>Last Man Standing</h1>
+    <div class="clock">
+      <div class="lap"><span class="label">Ronde</span><b id="lap">–</b></div>
+      <div><span class="label">In deze ronde</span><b id="elapsed">–</b></div>
+      <div><span class="label">Volgende start</span><b id="countdown">–</b></div>
+    </div>
+  </header>
+
+  <div class="summary" id="summary"><span class="note">Stand laden…</span></div>
+
+  <section class="panel">
+    <h2>Waar is het veld <span id="stripNote"></span></h2>
+    <div class="strip" id="strip"></div>
+  </section>
+
+  <div class="grid2">
+    <section class="panel">
+      <h2>Kaart <span>klik een loper om te volgen</span></h2>
+      <div id="map"></div>
+      <div class="legend">
+        <span><i class="dot" style="background:var(--run)"></i>onderweg</span>
+        <span><i class="dot" style="background:var(--late)"></i>haalt het uur niet op dit tempo</span>
+        <span><i class="dot" style="background:var(--done)"></i>binnen</span>
+        <span><i class="dot" style="background:var(--camp)"></i>bij kamp / uit</span>
+      </div>
+    </section>
+    <section class="panel">
+      <h2>Ronde-info</h2>
+      <div id="facts" style="display:grid;gap:10px"></div>
+    </section>
+  </div>
+
+  <section class="panel">
+    <h2>Klassement <span id="tableNote"></span></h2>
+    <div class="controls">
+      <input type="search" id="q" placeholder="Zoek naam of startnummer" aria-label="Zoek loper">
+      <label class="toggle"><input type="checkbox" id="showOut"> toon uitgevallen lopers</label>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr>
+          <th class="num">#</th><th>Bib</th><th>Naam</th><th class="num">Rondes</th>
+          <th>Huidige ronde</th><th class="num">Km</th><th class="num">Laatste</th><th class="num">Snelste</th><th>Rondetijden</th>
+        </tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>
+    Data: <a href="https://event.upfront.nl/lms-live" target="_blank" rel="noopener">event.upfront.nl/lms-live</a>.
+    De officiële “in race”-teller van de API telt uitgevallen lopers mee; deze pagina rekent zelf: wie een ronde mist, ligt eruit.
+    Positie in de ronde is berekend uit GPS, geprojecteerd op het parcours. <span id="updated"></span>
+  </footer>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+
+// De API van Upfront stuurt geen CORS-headers. Online loopt het via de
+// Vercel-functie (api/lms-live.js), lokaal via server.bb. Na het deployen:
+// zet hier de URL van je Vercel-project.
+const VERCEL_URL = "https://upfront-live.vercel.app/api/lms-live";
+const LOCAL = ["localhost", "127.0.0.1", ""].includes(location.hostname);
+const DATA_URL =
+  LOCAL ? (location.port === "8787" ? "/api/lms-live" : "http://localhost:8787/api/lms-live")
+  : location.hostname.endsWith(".vercel.app") ? "/api/lms-live"
+  : VERCEL_URL;
+
+// --- stand berekenen uit de ruwe API-data ----------------------------------
+
+const KX = 111320 * Math.cos(53.37 * Math.PI / 180), KY = 110540;
+const xy = (lat, lng) => [lng * KX, lat * KY];
+
+function buildSegs(points) {
+  const segs = [];
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1], b = points[i];
+    segs.push({ a: xy(a.lat, a.lng), b: xy(b.lat, b.lng), d0: a.dist, d1: b.dist });
+  }
+  return segs;
+}
+
+// Positie langs het parcours. Waar parcoursdelen dicht bij elkaar liggen
+// (zoals start en finish) kiezen we de kandidaat die het best past bij waar de
+// loper op basis van zijn tempo zou moeten zijn.
+function project(segs, lat, lng, expected) {
+  const [px, py] = xy(lat, lng);
+  const cs = segs.map(({ a: [ax, ay], b: [bx, by], d0, d1 }) => {
+    const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+    const t = l2 === 0 ? 0 : Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / l2));
+    return { along: d0 + t * (d1 - d0), off: Math.hypot(px - (ax + t * dx), py - (ay + t * dy)) };
+  });
+  const best = Math.min(...cs.map(c => c.off));
+  const near = cs.filter(c => c.off <= best + 25);
+  const pick = near.reduce((p, c) => Math.abs(c.along - expected) < Math.abs(p.along - expected) ? c : p);
+  return { along: pick.along, off: best };
+}
+
+let SEGS = null, SEGS_KEY = null;
+
+function enrich(d, now) {
+  const lapM = d.course.distance;
+  const key = d.course.points.length + ":" + lapM;
+  if (SEGS_KEY !== key) { SEGS = buildSegs(d.course.points); SEGS_KEY = key; }
+  const cur = d.currentLap;
+  const lapStart = Date.parse(d.currentLapStartedAt);
+  const elapsed = (now - lapStart) / 1000;
+
+  const runners = d.runners.map(r => {
+    const times = (r.lapTimes || []).map(t => t.seconds);
+    const avg = times.length ? times.reduce((a, b) => a + b, 0) / times.length : 3000;
+    const base = {
+      bib: r.bib, name: r.name, laps: r.laps, lat: r.lat, lng: r.lng, kmh: r.speedKmh,
+      ping: r.lastPingAt, avg: Math.round(avg), lapTimes: times,
+      best: times.length ? Math.min(...times) : null, last: times.at(-1) ?? null,
+    };
+    if (r.status !== 1) return { ...base, state: "out", outLap: r.outInLap ?? r.laps + 1 };
+    if (r.laps >= cur) return { ...base, state: "done", progress: 1 };
+    if (r.laps < cur - 1) return { ...base, state: "out", outLap: r.laps + 1 };
+    if (r.lat == null) return { ...base, state: "unknown" };
+
+    const expected = Math.min(lapM, lapM * elapsed / avg);
+    const { along, off } = project(SEGS, r.lat, r.lng, expected);
+    // start en finish liggen op hetzelfde punt: ver naast het parcours bij
+    // een van beide = in het kamp
+    if (off > 50 && (along < 150 || along > lapM - 150))
+      return { ...base, state: elapsed > 300 ? "camp" : "start", off: Math.round(off) };
+    const eta = along > 200 ? (lapM - along) * elapsed / along : null;
+    return { ...base, state: "running", progress: along / lapM, along: Math.round(along), off: Math.round(off),
+             eta: eta == null ? null : Math.round(eta), late: eta != null && elapsed + eta > 3600 };
+  });
+
+  const order = { done: 0, running: 1, start: 2, camp: 3, unknown: 4, out: 5 };
+  runners.sort((a, b) =>
+    order[a.state] - order[b.state] || b.laps - a.laps ||
+    (b.progress ?? 0) - (a.progress ?? 0) || (a.last ?? 99999) - (b.last ?? 99999));
+
+  return {
+    generatedAt: d.generatedAt, fetchedAt: now, currentLap: cur, lapStartedAt: lapStart, lapMeters: lapM,
+    finished: d.finished, winner: d.winner, fastestLap: d.fastestLap, starters: d.starters, apiInRace: d.inRace,
+    course: d.course.points.map(p => [p.lat, p.lng]), runners,
+  };
+}
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch {} }
+};
+let D = null, selected = store.get("lms.sel"), map, courseLine, markers = new Map(), followed = false;
+$("showOut").checked = store.get("lms.showOut") === "1";
+
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const mmss = s => { s = Math.max(0, Math.round(s)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
+const km = m => (m / 1000).toFixed(1).replace(".", ",");
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+function totalMeters(r) {
+  const full = Math.min(r.laps, D.currentLap - (r.state === "done" ? 0 : 1)) * D.lapMeters;
+  return full + (r.state === "running" ? r.along : 0);
+}
+
+function stateColor(r) {
+  if (r.state === "running") return r.late ? css("--late") : css("--run");
+  if (r.state === "done") return css("--done");
+  return css("--camp");
+}
+
+function initMap() {
+  if (!window.L) { $("map").innerHTML = '<p class="note" style="padding:12px">Kaart kon niet laden.</p>'; return; }
+  map = L.map("map", { zoomControl: true, attributionControl: true });
+  // PDOK (open data, geen key): OSM en CARTO weigeren localhost/file://.
+  const pdok = '<a href="https://www.pdok.nl">PDOK</a>';
+  const kaart = L.tileLayer("https://service.pdok.nl/brt/achtergrondkaart/wmts/v2_0/standaard/EPSG:3857/{z}/{x}/{y}.png",
+    { maxZoom: 19, attribution: `© Kadaster · ${pdok}` });
+  const lucht = L.tileLayer("https://service.pdok.nl/hwh/luchtfotorgb/wmts/v1_0/Actueel_orthoHR/EPSG:3857/{z}/{x}/{y}.jpeg",
+    { maxZoom: 19, attribution: `Luchtfoto © Beeldmateriaal Nederland · ${pdok}` });
+  const isDark = () => {
+    const t = document.documentElement.dataset.theme;
+    return t ? t === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+  };
+  const saved = store.get("lms.layer");
+  (saved ? (saved === "lucht" ? lucht : kaart) : (isDark() ? lucht : kaart)).addTo(map);
+  L.control.layers({ Kaart: kaart, Luchtfoto: lucht }, null, { position: "topright" }).addTo(map);
+  map.on("baselayerchange", e => store.set("lms.layer", e.layer === lucht ? "lucht" : "kaart"));
+  // de kaart krijgt zijn echte maat pas na layout en fonts
+  new ResizeObserver(() => { map.invalidateSize(); if (courseLine && !selected) map.fitBounds(courseLine.getBounds(), { padding: [16, 16] }); }).observe($("map"));
+}
+
+function drawMap() {
+  if (!map) return;
+  if (!courseLine) {
+    courseLine = L.polyline(D.course, { color: css("--accent"), weight: 4, opacity: .8 }).addTo(map);
+    map.invalidateSize();
+    map.fitBounds(courseLine.getBounds(), { padding: [16, 16] });
+    L.circleMarker(D.course[0], { radius: 7, color: css("--fg"), weight: 2, fillColor: css("--surface"), fillOpacity: 1 })
+      .bindTooltip("Start / finish").addTo(map);
+  }
+  const seen = new Set();
+  for (const r of D.runners) {
+    if (r.lat == null) continue;
+    const showOut = $("showOut").checked;
+    if (r.state === "out" && !showOut && r.bib !== selected) continue;
+    seen.add(r.bib);
+    const sel = r.bib === selected;
+    const style = { radius: sel ? 8 : 5, color: sel ? css("--accent") : css("--surface"), weight: sel ? 3 : 1,
+                    fillColor: stateColor(r), fillOpacity: .95 };
+    let m = markers.get(r.bib);
+    if (!m) {
+      m = L.circleMarker([r.lat, r.lng], style).addTo(map);
+      m.on("click", () => select(r.bib));
+      markers.set(r.bib, m);
+    } else { m.setLatLng([r.lat, r.lng]); m.setStyle(style); }
+    m.bindTooltip(`${esc(r.name)} (${esc(r.bib)})`);
+    if (sel) m.bringToFront();
+  }
+  for (const [bib, m] of markers) if (!seen.has(bib)) { m.remove(); markers.delete(bib); }
+}
+
+function renderClock() {
+  if (!D) return;
+  const el = (Date.now() - D.lapStartedAt) / 1000;
+  $("lap").textContent = D.currentLap;
+  $("elapsed").textContent = mmss(el);
+  $("countdown").textContent = mmss(3600 - el);
+}
+
+function renderSummary() {
+  const c = s => D.runners.filter(r => r.state === s).length;
+  const running = c("running"), late = D.runners.filter(r => r.state === "running" && r.late).length;
+  const alive = c("done") + running;
+  $("summary").innerHTML = `
+    <span class="chip" style="font-size:16px">${alive} nog in de race</span>
+    <span class="chip"><i class="dot" style="background:var(--done)"></i>${c("done")} binnen</span>
+    <span class="chip"><i class="dot" style="background:var(--run)"></i>${running} onderweg</span>
+    ${late ? `<span class="chip"><i class="dot" style="background:var(--late)"></i>${late} te laat op dit tempo</span>` : ""}
+    ${c("camp") + c("start") ? `<span class="chip"><i class="dot" style="background:var(--camp)"></i>${c("camp") + c("start")} niet vertrokken</span>` : ""}
+    <span class="chip">${c("out")} uit</span>
+    <span class="note">API zegt ${D.apiInRace} in race van ${D.starters} starters</span>`;
+}
+
+function renderStrip() {
+  const L_ = D.lapMeters, el = $("strip");
+  const runners = D.runners.filter(r => r.state === "running");
+  const ticks = [];
+  for (let k = 0; k * 1000 < L_; k++) ticks.push(`<span class="tick" style="left:${k * 1000 / L_ * 100}%">${k} km</span>`);
+  // stapel lopers die dicht bij elkaar zitten
+  const lanes = [];
+  const dots = runners.sort((a, b) => a.along - b.along).map(r => {
+    const x = r.along / L_ * 100;
+    let lane = 0; while (lanes[lane] !== undefined && x - lanes[lane] < 0.9) lane++;
+    lanes[lane] = x;
+    const y = 40 - (lane % 7) * 6;
+    return `<span class="r ${r.late ? "late" : ""} ${r.bib === selected ? "sel" : ""}" data-bib="${esc(r.bib)}"
+      style="left:${x}%;top:${y}px" title="${esc(r.name)} · ${Math.round(r.progress * 100)}%"></span>`;
+  });
+  const done = D.runners.filter(r => r.state === "done").length;
+  el.innerHTML = `<div class="track"></div>${ticks.join("")}<span class="finish">${done} binnen ▸</span>${dots.join("")}`;
+  el.querySelectorAll(".r").forEach(n => n.addEventListener("click", () => select(n.dataset.bib)));
+  $("stripNote").textContent = runners.length ? `${runners.length} lopers op het parcours` : "iedereen is binnen of in het kamp";
+}
+
+function renderFacts() {
+  const doneLaps = D.runners.filter(r => r.state === "done").map(r => r.last).filter(Boolean);
+  const fl = D.fastestLap;
+  const facts = [
+    ["Rondeafstand", `${km(D.lapMeters)} km`],
+    ["Totaal na deze ronde", `${km(D.lapMeters * D.currentLap)} km`],
+    ["Snelste ronde ooit", fl ? `${mmss(fl.seconds)} · ${esc(fl.name)} (ronde ${fl.lap})` : "–"],
+    ["Snelste deze ronde", doneLaps.length ? mmss(Math.min(...doneLaps)) : "–"],
+    ["Gemiddeld deze ronde (binnen)", doneLaps.length ? mmss(doneLaps.reduce((a, b) => a + b, 0) / doneLaps.length) : "–"],
+  ];
+  if (D.winner) facts.unshift(["Winnaar", esc(D.winner.name ?? D.winner)]);
+  const s = D.runners.find(r => r.bib === selected);
+  if (s) facts.push(["Gevolgd", `<b>${esc(s.name)}</b> · ${s.laps} rondes · ${km(totalMeters(s))} km`]);
+  $("facts").innerHTML = facts.map(([k, v]) => `<div><div class="label">${k}</div><div style="font-size:17px;font-variant-numeric:tabular-nums">${v}</div></div>`).join("");
+}
+
+function spark(times) {
+  const t = times.slice(-12);
+  if (t.length < 2) return "";
+  const w = 90, h = 22, lo = Math.min(...t), hi = Math.max(...t), span = Math.max(hi - lo, 60);
+  const pts = t.map((v, i) => [i / (t.length - 1) * (w - 4) + 2, h - 3 - (v - lo) / span * (h - 6)]);
+  const [lx, ly] = pts[pts.length - 1];
+  return `<svg class="spark" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" aria-label="rondetijden"><polyline points="${pts.map(p => p.join(",")).join(" ")}"/><circle cx="${lx}" cy="${ly}" r="2.3"/></svg>`;
+}
+
+function statusCell(r) {
+  switch (r.state) {
+    case "done": return `<span class="pill done">binnen · wacht op start</span>`;
+    case "running": return `<div class="prog"><div class="bar"><i style="width:${(r.progress * 100).toFixed(1)}%"></i></div><em>${Math.round(r.progress * 100)}%${r.eta != null ? ` · ${mmss(r.eta)}` : ""}</em></div>`;
+    case "camp": return `<span class="pill camp">niet vertrokken (${r.off} m van parcours)</span>`;
+    case "start": return `<span class="pill start">bij de start</span>`;
+    case "out": return `<span class="pill out">uit in ronde ${r.outLap}</span>`;
+    default: return `<span class="pill unknown">geen GPS</span>`;
+  }
+}
+
+function renderTable() {
+  const q = $("q").value.trim().toLowerCase(), showOut = $("showOut").checked;
+  let n = 0;
+  const rows = D.runners.filter(r => {
+    if (r.state === "out" && !showOut && !q) return false;
+    return !q || r.name.toLowerCase().includes(q) || r.bib.includes(q);
+  }).map(r => {
+    const pos = r.state === "out" ? "" : ++n;
+    return `<tr data-bib="${esc(r.bib)}" tabindex="0" class="${r.state === "out" ? "out" : ""} ${r.late ? "late" : ""} ${r.bib === selected ? "sel" : ""}">
+      <td class="num">${pos}</td><td class="bib">${esc(r.bib)}</td><td class="name">${esc(r.name)}</td>
+      <td class="num">${r.laps}</td><td>${statusCell(r)}</td><td class="num">${km(totalMeters(r))}</td>
+      <td class="num">${r.last ? mmss(r.last) : "–"}</td><td class="num">${r.best ? mmss(r.best) : "–"}</td>
+      <td>${spark(r.lapTimes)}</td></tr>`;
+  });
+  $("rows").innerHTML = rows.join("") || `<tr><td colspan="9" class="note">Geen lopers gevonden.</td></tr>`;
+  $("rows").querySelectorAll("tr[data-bib]").forEach(tr => {
+    tr.addEventListener("click", () => select(tr.dataset.bib));
+    tr.addEventListener("keydown", e => { if (e.key === "Enter") select(tr.dataset.bib); });
+  });
+  $("tableNote").textContent = "ETA = geschatte resterende tijd op huidig tempo";
+}
+
+function select(bib) {
+  selected = selected === bib ? null : bib;
+  store.set("lms.sel", selected ?? "");
+  followed = false;
+  render();
+  const r = D.runners.find(x => x.bib === selected);
+  if (map && r?.lat != null) map.setView([r.lat, r.lng], Math.max(map.getZoom(), 15));
+}
+
+function render() { renderClock(); renderSummary(); renderStrip(); renderFacts(); renderTable(); drawMap(); }
+
+async function load() {
+  try {
+    const res = await fetch(DATA_URL, { cache: "no-store" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const d = await res.json();
+    if (d.error || !d.ok) throw new Error(d.error || "API gaf geen stand");
+    D = enrich(d, Date.now());
+    render();
+    const gen = Date.parse(D.generatedAt), age = (Date.now() - gen) / 1000;
+    $("updated").innerHTML = age > 120
+      ? `<span class="err">Stand van ${new Date(gen).toLocaleTimeString("nl-NL")}: ${Math.round(age / 60)} min oud, de bron wordt niet bijgewerkt.</span>`
+      : `Stand van ${new Date(gen).toLocaleTimeString("nl-NL")}.`;
+  } catch (e) {
+    $("updated").innerHTML = `<span class="err">Kon de stand niet ophalen (${esc(e.message)}). Nieuwe poging over 15 s.</span>`;
+  }
+}
+
+initMap();
+load();
+// De API ververst elke 15 s. Een tabblad op de achtergrond haalt niets op
+// (spaart Worker-requests); bij terugkomen meteen verversen.
+setInterval(() => { if (!document.hidden) load(); }, 15000);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && D && Date.now() - D.fetchedAt > 15000) load();
+});
+setInterval(renderClock, 1000);
+$("q").addEventListener("input", renderTable);
+$("showOut").addEventListener("change", () => { store.set("lms.showOut", $("showOut").checked ? "1" : "0"); renderTable(); drawMap(); });
+</script>
+</body>
+</html>

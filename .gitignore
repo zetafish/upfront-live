@@ -1,0 +1,8 @@
+server.log
+out.txt
+live.json
+.wrangler/
+node_modules/
+.DS_Store
+.clj-kondo/
+.lsp/

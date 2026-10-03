@@ -33,13 +33,13 @@ async function history(d, now) {
   const lapOf = makeLapOf(Date.parse(d.eventStart));
   const k = `lms:${d.eventId}:${lap}`;
 
-  const [leftArr, zoneFlat, metaFlat] = await redis([
-    ["SMEMBERS", `${k}:left`], ["HGETALL", `${k}:zone`], ["HGETALL", `${k}:meta`],
+  const [leftArr, zoneFlat, metaFlat, maxFlat] = await redis([
+    ["SMEMBERS", `${k}:left`], ["HGETALL", `${k}:zone`], ["HGETALL", `${k}:meta`], ["HGETALL", `${k}:max`],
   ]);
-  const left = new Set(leftArr), zone = toObj(zoneFlat), meta = toObj(metaFlat);
+  const left = new Set(leftArr), zone = toObj(zoneFlat), meta = toObj(metaFlat), max = toObj(maxFlat);
 
   // waar is iedereen die aan deze ronde bezig kan zijn?
-  const newLeft = [], newZone = [], leftZone = [];
+  const newLeft = [], newZone = [], leftZone = [], newMax = [];
   for (const r of d.runners) {
     if (r.status !== 1 || r.lat == null) continue;
     const { laps, avg } = lapInfo(r, lap, lapOf);
@@ -49,6 +49,8 @@ async function history(d, now) {
     const seen = onCourse(along, off, lapM, r.lastPingAt != null ? Date.parse(r.lastPingAt) : null, lapStart);
     if (seen && !left.has(r.bib)) { newLeft.push(r.bib); left.add(r.bib); }
     if (seen && zone[r.bib]) { leftZone.push(r.bib); delete zone[r.bib]; }
+    // verste punt van deze ronde: wie omdraait, komt nooit bij de laatste kilometers
+    if (seen && along > Number(max[r.bib] ?? 0) + 50) { max[r.bib] = String(Math.round(along)); newMax.push(r.bib, max[r.bib]); }
     if (!mid && !zone[r.bib]) { newZone.push(r.bib); zone[r.bib] = String(now); }
   }
 
@@ -63,12 +65,14 @@ async function history(d, now) {
   if (newLeft.length) writes.push(["SADD", `${k}:left`, ...newLeft]);
   if (leftZone.length) writes.push(["HDEL", `${k}:zone`, ...leftZone]);
   for (const bib of newZone) writes.push(["HSETNX", `${k}:zone`, bib, String(now)]);
+  if (newMax.length) writes.push(["HSET", `${k}:max`, ...newMax], ["EXPIRE", `${k}:max`, String(TTL)]);
   if (meta.since == null) for (const s of ["left", "zone", "meta"]) writes.push(["EXPIRE", `${k}:${s}`, String(TTL)]);
   if (writes.length) await redis(writes);
 
   return {
     lap, since, gap, left: [...left],
     zone: Object.fromEntries(Object.entries(zone).map(([b, t]) => [b, Number(t)])),
+    max: Object.fromEntries(Object.entries(max).map(([b, m]) => [b, Number(m)])),
   };
 }
 

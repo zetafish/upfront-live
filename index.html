@@ -280,7 +280,7 @@ details.data td, details.data th { padding: 3px 12px 3px 0; }
       <section><h4>Uitgevallen</h4>
         <p>Wie een ronde niet binnen het uur afmaakt, ligt eruit. Officieel telt iemand pas als uitgevallen als de organisatie dat heeft verwerkt. Daarom is ons aantal lopers in de race vaak lager dan het officiële.</p></section>
       <section><h4>Niet vertrokken</h4>
-        <p>Op basis van GPS: wie 5 minuten na de start nog binnen 150 meter van de start staat, of ernaast (bij de tenten), is niet aan de ronde begonnen. Wandelend zit je na 5 minuten al op zo'n 400 meter. Start en finish zijn hetzelfde punt, dus wie daar later in de ronde staat, telt alleen als bijna binnen als hij op het parcours staat (niet ernaast, bij de tenten) en we hem deze ronde op het parcours zagen, of als hij op zijn eigen tempo al binnen kan zijn en zijn tracker nog signaal geeft.</p></section>
+        <p>Op basis van GPS: wie 5 minuten na de start nog binnen 150 meter van de start staat, of ernaast (bij de tenten), is niet aan de ronde begonnen. Wandelend zit je na 5 minuten al op zo'n 400 meter. Wie wel vertrok maar terugliep naar de start, zonder ooit bij de laatste 1,5 km te komen, is teruggekeerd. Start en finish zijn hetzelfde punt, dus wie daar later in de ronde staat, telt alleen als bijna binnen als hij op het parcours staat (niet ernaast, bij de tenten) en we hem deze ronde op het parcours zagen, of als hij op zijn eigen tempo al binnen kan zijn en zijn tracker nog signaal geeft.</p></section>
       <section><h4>Kilometers</h4>
         <p>We rekenen met de officiële rondeafstand van 6,706 km: 24 rondes zijn precies 100 mijl. De GPS-route in de data is iets korter, omdat GPS bochten afsnijdt. Die gebruiken we alleen om te bepalen hoe ver iemand in de ronde is.</p></section>
       <section><h4>Positie in de ronde</h4>
@@ -383,6 +383,13 @@ function enrich(d, now, trail = null) {
       // RTC: wie 5 min na de start niet vertrokken is (bij de bel moet je het
       // startvak uit; wandelend zit je dan al op zo'n 400 m)
       const s0 = d.course.points[0], fromStart = Math.round(distance(r.lat, r.lng, s0.lat, s0.lng));
+      // Teruggekeerd: wel vertrokken, maar nooit bij de laatste kilometers
+      // geweest (de server houdt per ronde het verste punt bij). Alleen als de
+      // ronde zonder gaten gevolgd is, anders kan hij ongezien verder zijn gekomen.
+      const reached = trail?.max?.[r.bib];
+      const backInZone = zoneSince != null && now - zoneSince > 180000;   // ruim voor een late finish-registratie
+      if (seenLeft && backInZone && reached != null && !trail.gap && reached < lapM - 1500)
+        return { ...base, state: "camp", off: Math.round(off), fromStart, back: Math.round(reached / lapM * LAP_M) };
       if (notLeft && elapsed > 300)
         return { ...base, state: "camp", off: Math.round(off), fromStart };
       // start = finish: aan het eind van het parcours staat hij ook bij de start
@@ -510,15 +517,17 @@ function renderClock() {
 
 function renderSummary() {
   const c = s => D.runners.filter(r => r.state === s).length;
-  // in de eerste 10 min staat iedereen nog bij de start: die tellen als onderweg
+  // in de eerste 5 min staat iedereen nog bij de start: die tellen als onderweg
   const running = c("running") + c("start") + c("unknown"), late = D.runners.filter(r => r.state === "running" && r.late).length;
+  const camp = c("camp"), back = D.runners.filter(r => r.state === "camp" && r.back != null).length;
   const alive = c("done") + running;
   $("summary").innerHTML = `
     <span class="chip" style="font-size:16px">${alive} nog in de race</span>
     <span class="chip"><i class="dot" style="background:var(--done)"></i>${c("done")} binnen</span>
     <span class="chip"><i class="dot" style="background:var(--run)"></i>${running} onderweg</span>
     ${late ? `<span class="chip"><i class="dot" style="background:var(--late)"></i>${late} te laat op dit tempo</span>` : ""}
-    ${c("camp") ? `<span class="chip"><i class="dot" style="background:var(--camp)"></i>${c("camp")} niet vertrokken</span>` : ""}
+    ${camp - back ? `<span class="chip"><i class="dot" style="background:var(--camp)"></i>${camp - back} niet vertrokken</span>` : ""}
+    ${back ? `<span class="chip"><i class="dot" style="background:var(--camp)"></i>${back} teruggekeerd</span>` : ""}
     <span class="chip">${c("out")} uit</span>`;
 }
 
@@ -576,7 +585,9 @@ function statusCell(r) {
   switch (r.state) {
     case "done": return `<span class="pill done">binnen · wacht op start</span>`;
     case "running": return `<div class="prog"><div class="bar"><i style="width:${(r.progress * 100).toFixed(1)}%"></i></div><em${r.eta != null ? ` title="Geschatte resterende tijd op huidig tempo"` : ""}>${Math.round(r.progress * 100)}%${r.eta != null ? ` · nog ${mmss(r.eta)}` : ""}</em></div>`;
-    case "camp": return `<span class="pill camp">niet vertrokken (${r.fromStart} m van de start)</span>`;
+    case "camp": return r.back != null
+      ? `<span class="pill camp">teruggekeerd na ${km(r.back)} km</span>`
+      : `<span class="pill camp">niet vertrokken (${r.fromStart} m van de start)</span>`;
     case "start": return `<span class="pill start">bij de start</span>`;
     case "dns": return `<span class="pill out">niet gestart</span>`;
     case "out": return `<span class="pill out">uit in ronde ${r.outLap}</span>`;
@@ -939,7 +950,7 @@ async function load() {
     // gedeelde geschiedenis van de server; zonder die (lokaal, Redis weg) de eigen
     const h = d.history;
     const trail = h && h.lap === d.currentLap
-      ? { lap: h.lap, since: h.since, gap: h.gap, left: new Set(h.left), zone: h.zone }
+      ? { lap: h.lap, since: h.since, gap: h.gap, left: new Set(h.left), zone: h.zone, max: h.max }
       : TRAIL;
     // tabblad op de achtergrond haalt niets op: na een gat van > 5 min is de
     // eigen geschiedenis van deze ronde onvolledig

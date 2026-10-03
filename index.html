@@ -380,6 +380,8 @@ function enrich(d, now) {
     // een van beide = in het kamp
     if (off > 50 && (along < 150 || along > lapM - 150))
       return { ...base, state: elapsed > 300 ? "camp" : "start", off: Math.round(off) };
+    // na 10 min nog bij de start (ook al is dat op het parcours): niet vertrokken
+    if (along < 150 && elapsed > 600) return { ...base, state: "camp", off: Math.round(off) };
     // Resterende tijd: in het eerste kwart is het tempo van deze ronde nog
     // niet betrouwbaar (wandelen vanaf de start), dus dan het eigen gemiddelde.
     const progress = along / lapM;
@@ -547,7 +549,7 @@ function statusCell(r) {
   switch (r.state) {
     case "done": return `<span class="pill done">binnen · wacht op start</span>`;
     case "running": return `<div class="prog"><div class="bar"><i style="width:${(r.progress * 100).toFixed(1)}%"></i></div><em${r.eta != null ? ` title="Geschatte resterende tijd op huidig tempo"` : ""}>${Math.round(r.progress * 100)}%${r.eta != null ? ` · nog ${mmss(r.eta)}` : ""}</em></div>`;
-    case "camp": return `<span class="pill camp">niet vertrokken (${r.off} m van parcours)</span>`;
+    case "camp": return `<span class="pill camp">niet vertrokken${r.off > 50 ? ` (${r.off} m van parcours)` : " (staat bij de start)"}</span>`;
     case "start": return `<span class="pill start">bij de start</span>`;
     case "dns": return `<span class="pill out">niet gestart</span>`;
     case "out": return `<span class="pill out">uit in ronde ${r.outLap}</span>`;

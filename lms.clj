@@ -68,7 +68,9 @@
         {:keys [along off]} (when (and (:lat r) (not done?) (not out?))
                               (project (:lat r) (:lng r)))
         ;; start en finish liggen op hetzelfde punt: ver naast het parcours = kamp
-        camp? (and off (> off 50) (or (< along 150) (> along (- lap-m 150))))
+        ;; en na 10 min nog bij de start (ook op het parcours) = niet vertrokken
+        camp? (and off (or (and (> off 50) (or (< along 150) (> along (- lap-m 150))))
+                           (and (< along 150) (> elapsed 600))))
         in-lap (cond done? lap-m camp? 0 along along :else 0)
         total-km (/ (+ (* (min n (dec cur-lap)) lap-m) (if out? 0 in-lap)) 1000)]
     {:bib (:bib r) :name (:name r) :laps n

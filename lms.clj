@@ -73,7 +73,9 @@
         ;; de snelste ronde duurt ruim 32 min).
         valid (->> (:lapTimes r) (map :seconds) (filter #(<= % 3600)))
         avg (if (seq valid) (/ (reduce + valid) (count valid)) 3000)
-        stale? (some-> (:lastPingAt r) ms (< lap-start))
+        ;; werkende trackers pingen elke halve minuut: > 5 min stil = oude positie
+        stale? (some-> (:lastPingAt r) ms
+                       (as-> p (or (< p lap-start) (> (- (System/currentTimeMillis) p) 300000))))
         too-early? (or (< elapsed 1800) (< elapsed (- avg 300)))
         camp? (and off
                    (or (< along 150) (> along (- lap-m 150)))

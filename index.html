@@ -279,7 +279,7 @@ details.data td, details.data th { padding: 3px 12px 3px 0; }
       <section><h4>Uitgevallen</h4>
         <p>Wie een ronde niet binnen het uur afmaakt, ligt eruit. Officieel telt iemand pas als uitgevallen als de organisatie dat heeft verwerkt. Daarom is ons aantal lopers in de race vaak lager dan het officiële.</p></section>
       <section><h4>Niet vertrokken</h4>
-        <p>Op basis van GPS: wie 5 minuten na de start nog naast het parcours bij start en finish staat, of na 10 minuten nog binnen 150 meter van de start, is niet aan de ronde begonnen. Start en finish zijn hetzelfde punt, dus wie daar later in de ronde staat, telt alleen als bijna binnen als we hem deze ronde op het parcours zagen, of als hij op zijn eigen tempo al binnen kan zijn.</p></section>
+        <p>Op basis van GPS: wie 5 minuten na de start nog naast het parcours bij start en finish staat, of na 10 minuten nog binnen 150 meter van de start, is niet aan de ronde begonnen. Start en finish zijn hetzelfde punt, dus wie daar later in de ronde staat, telt alleen als bijna binnen als we hem deze ronde op het parcours zagen, of als hij op zijn eigen tempo al binnen kan zijn en zijn tracker nog signaal geeft.</p></section>
       <section><h4>Kilometers</h4>
         <p>We rekenen met de officiële rondeafstand van 6,706 km: 24 rondes zijn precies 100 mijl. De GPS-route in de data is iets korter, omdat GPS bochten afsnijdt. Die gebruiken we alleen om te bepalen hoe ver iemand in de ronde is.</p></section>
       <section><h4>Positie in de ronde</h4>
@@ -361,7 +361,7 @@ function enrich(d, now, trail = null) {
     // vertrokken als hij deze ronde nog niet op het parcours gezien is, en
     // - de ronde vanaf het begin zonder gaten gevolgd is, of
     // - hij al meer dan 3 min in de zone staat zonder over de finish te komen, of
-    // - zijn tracker sinds de start van de ronde niets meer stuurde, of
+    // - zijn tracker al 5 min (of sinds de rondestart) niets meer stuurde, of
     // - hij op eigen tempo nog lang niet binnen kan zijn (of < 30 min: de
     //   snelste ronde duurt ruim 32 min).
     // De geschiedenis komt van de server (gedeeld), anders uit de browser.
@@ -372,7 +372,10 @@ function enrich(d, now, trail = null) {
       const watched = trail != null && trail.since < 300 && !trail.gap;
       const zoneSince = trail?.zone?.[r.bib];
       const stuck = zoneSince != null && now - zoneSince > 180000;
-      const stalePing = r.lastPingAt != null && Date.parse(r.lastPingAt) < lapStart;
+      // Een werkende tracker pingt elke halve minuut. Een oude ping (van voor
+      // de rondestart, of > 5 min geleden) is geen bewijs dat iemand loopt.
+      const pingAt = r.lastPingAt != null ? Date.parse(r.lastPingAt) : null;
+      const stalePing = pingAt != null && (pingAt < lapStart || now - pingAt > 300000);
       const tooEarly = elapsed < 1800 || elapsed < avg - 300;
       const notLeft = along < MID || (!seenLeft && (watched || stuck || stalePing || tooEarly));
       if (notLeft && (off > 50 ? elapsed > 300 : elapsed > 600))

@@ -280,7 +280,7 @@ details.data td, details.data th { padding: 3px 12px 3px 0; }
       <section><h4>Uitgevallen</h4>
         <p>Wie een ronde niet binnen het uur afmaakt, ligt eruit. Officieel telt iemand pas als uitgevallen als de organisatie dat heeft verwerkt. Daarom is ons aantal lopers in de race vaak lager dan het officiële.</p></section>
       <section><h4>Niet vertrokken</h4>
-        <p>Op basis van GPS: wie 5 minuten na de start nog naast het parcours bij start en finish staat, of na 10 minuten nog binnen 150 meter van de start, is niet aan de ronde begonnen. Start en finish zijn hetzelfde punt, dus wie daar later in de ronde staat, telt alleen als bijna binnen als hij op het parcours staat (niet ernaast, bij de tenten) en we hem deze ronde op het parcours zagen, of als hij op zijn eigen tempo al binnen kan zijn en zijn tracker nog signaal geeft.</p></section>
+        <p>Op basis van GPS: wie 5 minuten na de start nog binnen 150 meter van de start staat, of ernaast (bij de tenten), is niet aan de ronde begonnen. Wandelend zit je na 5 minuten al op zo'n 400 meter. Start en finish zijn hetzelfde punt, dus wie daar later in de ronde staat, telt alleen als bijna binnen als hij op het parcours staat (niet ernaast, bij de tenten) en we hem deze ronde op het parcours zagen, of als hij op zijn eigen tempo al binnen kan zijn en zijn tracker nog signaal geeft.</p></section>
       <section><h4>Kilometers</h4>
         <p>We rekenen met de officiële rondeafstand van 6,706 km: 24 rondes zijn precies 100 mijl. De GPS-route in de data is iets korter, omdat GPS bochten afsnijdt. Die gebruiken we alleen om te bepalen hoe ver iemand in de ronde is.</p></section>
       <section><h4>Positie in de ronde</h4>
@@ -311,7 +311,7 @@ details.data td, details.data th { padding: 3px 12px 3px 0; }
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script type="module">
-import { MID, LAP_M, buildSegs, project, makeLapOf, lapInfo, onCourse } from "./lib/course.js";
+import { MID, LAP_M, buildSegs, project, makeLapOf, lapInfo, onCourse, distance } from "./lib/course.js";
 
 const $ = id => document.getElementById(id);
 
@@ -380,8 +380,11 @@ function enrich(d, now, trail = null) {
       const tooEarly = elapsed < 1800 || elapsed < avg - 300;
       // wie bijna binnen is, loopt op het parcours; ver ernaast = bij de tenten
       const notLeft = along < MID || off > 50 || (!seenLeft && (watched || stuck || stalePing || tooEarly));
-      if (notLeft && (off > 50 ? elapsed > 300 : elapsed > 600))
-        return { ...base, state: "camp", off: Math.round(off) };
+      // RTC: wie 5 min na de start niet vertrokken is (bij de bel moet je het
+      // startvak uit; wandelend zit je dan al op zo'n 400 m)
+      const s0 = d.course.points[0], fromStart = Math.round(distance(r.lat, r.lng, s0.lat, s0.lng));
+      if (notLeft && elapsed > 300)
+        return { ...base, state: "camp", off: Math.round(off), fromStart };
       // start = finish: aan het eind van het parcours staat hij ook bij de start
       if (notLeft) return { ...base, state: "start", along: along > lapM / 2 ? 0 : Math.round(along), off: Math.round(off) };
     }
@@ -565,7 +568,7 @@ function statusCell(r) {
   switch (r.state) {
     case "done": return `<span class="pill done">binnen · wacht op start</span>`;
     case "running": return `<div class="prog"><div class="bar"><i style="width:${(r.progress * 100).toFixed(1)}%"></i></div><em${r.eta != null ? ` title="Geschatte resterende tijd op huidig tempo"` : ""}>${Math.round(r.progress * 100)}%${r.eta != null ? ` · nog ${mmss(r.eta)}` : ""}</em></div>`;
-    case "camp": return `<span class="pill camp">niet vertrokken${r.off > 50 ? ` (${r.off} m van parcours)` : " (staat bij de start)"}</span>`;
+    case "camp": return `<span class="pill camp">niet vertrokken (${r.fromStart} m van de start)</span>`;
     case "start": return `<span class="pill start">bij de start</span>`;
     case "dns": return `<span class="pill out">niet gestart</span>`;
     case "out": return `<span class="pill out">uit in ronde ${r.outLap}</span>`;

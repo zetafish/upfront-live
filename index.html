@@ -104,10 +104,12 @@ td.bib { color: var(--muted); }
 svg.spark { display: block; }
 svg.spark polyline { fill: none; stroke: var(--muted); stroke-width: 1.3; }
 svg.spark circle { fill: var(--accent); }
-.sparkbtn { display: block; padding: 2px 4px; margin: -2px -4px; border: 1px solid transparent; border-radius: 6px;
-  background: none; cursor: zoom-in; color: inherit; }
-.sparkbtn:hover { border-color: var(--line); background: var(--bg); }
+.sparkbtn { display: inline-flex; align-items: center; gap: 4px; padding: 3px 6px 3px 6px; margin: -3px 0;
+  border: 1px solid var(--line); border-radius: 6px; background: var(--bg); cursor: pointer; color: var(--muted); }
+.sparkbtn .chev { font-size: 15px; line-height: 1; }
+.sparkbtn:hover { border-color: var(--c-in); color: var(--c-in); }
 .sparkbtn:hover svg.spark polyline { stroke: var(--c-in); }
+.hint { font: 500 13px var(--body); text-transform: none; letter-spacing: 0; color: var(--muted); }
 
 dialog.detail { border: none; border-radius: 12px; padding: 0; width: min(780px, calc(100vw - 32px));
   max-height: calc(100vh - 32px); background: var(--surface); color: var(--fg); box-shadow: 0 20px 60px rgb(0 0 0 / .3); }
@@ -240,7 +242,7 @@ details.data td, details.data th { padding: 3px 12px 3px 0; }
   </section>
 
   <section class="panel">
-    <h2>Klassement</h2>
+    <h2>Klassement <span class="hint">Klik op een grafiekje voor alle rondetijden</span></h2>
     <div class="controls">
       <input type="search" id="q" placeholder="Zoek naam of startnummer" aria-label="Zoek loper">
       <label class="toggle"><input type="checkbox" id="showOut"> toon uitgevallen lopers</label>
@@ -327,20 +329,49 @@ function enrich(d, now) {
   const lapStart = Date.parse(d.currentLapStartedAt);
   const elapsed = (now - lapStart) / 1000;
 
+  const eventStart = Date.parse(d.eventStart);
+  // Bij welke ronde hoort een finish? Het uur waarin hij valt, behalve in de
+  // eerste 30 min: dan is het een te late finish van de ronde ervoor (de
+  // snelste ronde ooit duurt ruim 32 min). Zo tellen we ook rondes mee waarvan
+  // de tijdwaarneming de doorkomst gemist heeft.
+  const lapOf = at => {
+    const e = Date.parse(at) - eventStart, h = Math.floor(e / 3600000) + 1;
+    return (e % 3600000) < 1800000 ? h - 1 : h;
+  };
+
   const runners = d.runners.map(r => {
-    const times = (r.lapTimes || []).map(t => t.seconds);
-    const avg = times.length ? times.reduce((a, b) => a + b, 0) / times.length : 3000;
+    let prev = 0;
+    const n = (r.lapTimes || []).length;
+    const lastLap = n ? lapOf(r.lapTimes[n - 1].finishedAt) : 0;
+    const stillIn = r.status === 1 && lastLap >= cur - 1;
+    const lapDetail = (r.lapTimes || []).map((t, i) => {
+      const lap = lapOf(t.finishedAt), gap = lap - prev > 1;
+      prev = lap;
+      // Wie na deze ronde nog een ronde liep, finishte binnen het uur. Een tijd
+      // boven de 60:00 is dan fout: na een gemiste doorkomst telt de API soms
+      // door vanaf een eerdere doorkomst. Alleen de laatste ronde van iemand die
+      // eruit ligt, mag te laat zijn.
+      const bad = t.seconds > 3600 && (i < n - 1 || stillIn);
+      return { lap, s: bad ? null : t.seconds, pace: bad ? null : t.paceSecPerKm, at: t.finishedAt, gap };
+    });
+    const missed = [];
+    for (let k = 1, seen = new Set(lapDetail.map(t => t.lap)); k <= prev; k++) if (!seen.has(k)) missed.push(k);
+    // nog in de race: de laatste finish bepaalt het aantal rondes (wie verder
+    // is, heeft de gemiste rondes ook gelopen); uitgevallen: de API volgen
+    const laps = r.status === 1 ? Math.max(r.laps, prev) : r.laps;
+    const times = lapDetail.filter(t => t.s != null).map(t => t.s);
+    const valid = times.filter(s => s <= 3600);
+    const avg = valid.length ? valid.reduce((a, b) => a + b, 0) / valid.length : 3000;
     const base = {
-      bib: r.bib, name: r.name, laps: r.laps, lat: r.lat, lng: r.lng, kmh: r.speedKmh,
-      ping: r.lastPingAt, avg: Math.round(avg), lapTimes: times,
-      lapDetail: (r.lapTimes || []).map(t => ({ lap: t.lap, s: t.seconds, pace: t.paceSecPerKm, at: t.finishedAt })),
+      bib: r.bib, name: r.name, laps, apiLaps: r.laps, missed, lat: r.lat, lng: r.lng, kmh: r.speedKmh,
+      ping: r.lastPingAt, avg: Math.round(avg), lapTimes: times, lapDetail,
       best: times.length ? Math.min(...times) : null, last: times.at(-1) ?? null,
     };
     // status 0/3 zonder rondes: niet gestart (telt niet mee als starter)
     if (r.status !== 1 && r.status !== 4 && r.laps === 0) return { ...base, state: "dns" };
     if (r.status !== 1) return { ...base, state: "out", outLap: r.outInLap ?? r.laps + 1 };
-    if (r.laps >= cur) return { ...base, state: "done", progress: 1 };
-    if (r.laps < cur - 1) return { ...base, state: "out", outLap: r.laps + 1 };
+    if (laps >= cur) return { ...base, state: "done", progress: 1 };
+    if (laps < cur - 1) return { ...base, state: "out", outLap: laps + 1 };
     if (r.lat == null) return { ...base, state: "unknown" };
 
     const expected = Math.min(lapM, lapM * elapsed / avg);
@@ -349,9 +380,13 @@ function enrich(d, now) {
     // een van beide = in het kamp
     if (off > 50 && (along < 150 || along > lapM - 150))
       return { ...base, state: elapsed > 300 ? "camp" : "start", off: Math.round(off) };
-    const eta = along > 200 ? (lapM - along) * elapsed / along : null;
-    return { ...base, state: "running", progress: along / lapM, along: Math.round(along), off: Math.round(off),
-             eta: eta == null ? null : Math.round(eta), late: eta != null && elapsed + eta > 3600 };
+    // Resterende tijd: in het eerste kwart is het tempo van deze ronde nog
+    // niet betrouwbaar (wandelen vanaf de start), dus dan het eigen gemiddelde.
+    const progress = along / lapM;
+    const eta = progress < 0.25 ? avg * (1 - progress)
+              : (lapM - along) * elapsed / along;
+    return { ...base, state: "running", progress, along: Math.round(along), off: Math.round(off),
+             eta: Math.round(eta), late: elapsed + eta > 3600 };
   });
 
   const order = { done: 0, running: 1, start: 2, camp: 3, unknown: 4, out: 5, dns: 6 };
@@ -532,7 +567,7 @@ function renderTable() {
       <td class="num">${pos}</td><td class="bib">${esc(r.bib)}</td><td class="name">${esc(r.name)}</td>
       <td class="num">${r.laps}</td><td>${statusCell(r)}</td><td class="num">${km(totalMeters(r))}</td>
       <td class="num">${r.last ? mmss(r.last) : "–"}</td><td class="num">${r.best ? mmss(r.best) : "–"}</td>
-      <td>${r.lapTimes.length >= 2 ? `<button type="button" class="sparkbtn" data-bib="${esc(r.bib)}" title="Details bekijken" aria-label="Rondetijden van ${esc(r.name)} bekijken">${spark(r.lapTimes)}</button>` : ""}</td></tr>`;
+      <td>${r.lapTimes.length >= 2 ? `<button type="button" class="sparkbtn" data-bib="${esc(r.bib)}" title="Alle rondetijden bekijken" aria-label="Rondetijden van ${esc(r.name)} bekijken">${spark(r.lapTimes)}<span class="chev" aria-hidden="true">›</span></button>` : ""}</td></tr>`;
   });
   $("rows").innerHTML = rows.join("") || `<tr><td colspan="9" class="note">Geen lopers gevonden.</td></tr>`;
   $("rows").querySelectorAll("tr[data-bib]").forEach(tr => {
@@ -562,6 +597,7 @@ let detailBib = null;
 function fieldLaps() {
   const byLap = new Map();
   for (const r of D.runners) for (const t of r.lapDetail) {
+    if (t.s == null) continue;
     if (!byLap.has(t.lap)) byLap.set(t.lap, []);
     byLap.get(t.lap).push(t.s);
   }
@@ -583,7 +619,7 @@ function openDetail(bib) {
 function renderDetail() {
   const r = D.runners.find(x => x.bib === detailBib);
   if (!r) return;
-  const laps = r.lapDetail, field = fieldLaps();
+  const laps = r.lapDetail.filter(t => t.s != null), field = fieldLaps();
   const secs = laps.map(t => t.s);
   const best = secs.length ? Math.min(...secs) : null;
   const avg = secs.length ? secs.reduce((a, b) => a + b, 0) / secs.length : null;
@@ -596,7 +632,8 @@ function renderDetail() {
   const avgPace = laps.length ? laps.reduce((a, t) => a + t.pace, 0) / laps.length : null;
 
   $("detailName").textContent = r.name;
-  $("detailSub").innerHTML = `<span>Startnummer ${esc(r.bib)}</span>${statusCell(r)}`;
+  $("detailSub").innerHTML = `<span>Startnummer ${esc(r.bib)}</span>${statusCell(r)}` +
+    (r.missed.length ? `<span>Tijdwaarneming miste ronde ${r.missed.join(", ")} (wel gelopen)</span>` : "");
 
   const kpi = (v, label, sub = "") => `<div><small>${label}</small><b>${v}</b>${sub ? `<small>${sub}</small>` : ""}</div>`;
   const kpis = [
@@ -611,7 +648,12 @@ function renderDetail() {
     kpi(lastPos ? `${lastPos[0]}<small style="font:500 14px var(--body)"> / ${lastPos[1]}</small>` : "–", "Positie laatste ronde", lastPos ? `ronde ${laps.at(-1).lap}` : ""),
   ].join("");
 
-  const rows = laps.map(t => {
+  const byLap = new Map(r.lapDetail.map(t => [t.lap, t]));
+  const maxLap = Math.max(0, ...r.lapDetail.map(t => t.lap));
+  const rows = Array.from({ length: maxLap }, (_, i) => i + 1).map(k => {
+    const t = byLap.get(k);
+    if (!t) return `<tr><td class="num">${k}</td><td colspan="5" class="note">doorkomst niet geregistreerd</td></tr>`;
+    if (t.s == null) return `<tr><td class="num">${k}</td><td colspan="5" class="note">tijd onbekend (vorige doorkomst gemist) · binnen om ${new Date(t.at).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" })}</td></tr>`;
     const all = field.get(t.lap) || [], med = median(all);
     const pos = all.indexOf(t.s) + 1, diff = med == null ? null : t.s - med;
     return `<tr><td class="num">${t.lap}</td><td class="num">${mmss(t.s)}</td><td class="num">${pace(t.pace)}</td>
@@ -640,15 +682,16 @@ function renderDetail() {
 function drawLapChart(r, field) {
   const box = $("lapchart");
   if (!box) return;
-  const laps = r.lapDetail;
+  const laps = r.lapDetail.filter(t => t.s != null);
   if (laps.length < 1) { box.innerHTML = `<p class="note">Nog geen rondetijden.</p>`; return; }
   const meds = laps.map(t => median(field.get(t.lap) || []));
   const W = Math.max(280, box.clientWidth), H = 260, m = { l: 44, r: 12, t: 14, b: 26 };
   const pw = W - m.l - m.r, ph = H - m.t - m.b;
   const vals = [...laps.map(t => t.s), ...meds.filter(v => v != null)];
   const lo = Math.max(0, Math.floor((Math.min(...vals) - 60) / 300) * 300), hi = 3600;
-  const n = laps.length;
-  const x = i => m.l + (n === 1 ? pw / 2 : i / (n - 1) * pw);
+  const n = laps.length, first = laps[0].lap, lastLap = laps.at(-1).lap;
+  const xl = lap => m.l + (lastLap === first ? pw / 2 : (lap - first) / (lastLap - first) * pw);
+  const x = i => xl(laps[i].lap);
   const yy = s => m.t + ph - (Math.min(s, hi) - lo) / (hi - lo) * ph;
   const best = Math.min(...laps.map(t => t.s));
 
@@ -662,7 +705,10 @@ function drawLapChart(r, field) {
     axis += `<text x="${x(i)}" y="${H - 6}" text-anchor="middle">${t.lap}</text>`; });
 
   const medPts = meds.map((v, i) => v == null ? null : `${x(i)},${yy(v)}`).filter(Boolean).join(" ");
-  const runPts = laps.map((t, i) => `${x(i)},${yy(t.s)}`).join(" ");
+  // lijn onderbreken waar een ronde geen geldige tijd heeft
+  const runs = [[]];
+  laps.forEach((t, i) => { if (i && t.lap - laps[i - 1].lap > 1) runs.push([]); runs.at(-1).push(`${x(i)},${yy(t.s)}`); });
+  const runLines = runs.map(p => `<polyline class="runner" points="${p.join(" ")}"/>`).join("");
   const pts = laps.map((t, i) => `<circle class="pt ${t.s === best ? "best" : ""}" data-i="${i}" cx="${x(i)}" cy="${yy(t.s)}" r="4"/>`).join("");
 
   box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Rondetijden per ronde">
@@ -670,7 +716,7 @@ function drawLapChart(r, field) {
     <line class="limit" x1="${m.l}" x2="${W - m.r}" y1="${yy(hi)}" y2="${yy(hi)}"/>
     <text class="limit-lbl" x="${W - m.r}" y="${yy(hi) - 5}" text-anchor="end">limiet 60:00</text>
     <polyline class="median" points="${medPts}"/>
-    <polyline class="runner" points="${runPts}"/>
+    ${runLines}
     <line class="cross" id="lapCross" y1="${m.t}" y2="${m.t + ph}" x1="-10" x2="-10"/>
     ${pts}
     <rect id="lapHit" x="${m.l - 10}" y="${m.t}" width="${pw + 20}" height="${ph}" fill="transparent"/>

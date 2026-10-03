@@ -76,7 +76,10 @@ async function history(d, now) {
   };
 }
 
-export async function GET() {
+// ?ping: voor een cron-dienst die de geschiedenis bijhoudt als niemand kijkt.
+// Zelfde werk, maar een klein antwoord en niet uit de cache.
+export async function GET(req) {
+  const ping = new URL(req.url).searchParams.has("ping");
   try {
     const res = await fetch(UPSTREAM, { headers: { "User-Agent": "lms-live-proxy" } });
     if (!res.ok) throw new Error(`upstream HTTP ${res.status}`);
@@ -87,6 +90,9 @@ export async function GET() {
       try { d.history = await history(d, Date.now()); hs = "ok"; }
       catch (e) { hs = "error"; console.error("history:", e.message); }   // zonder geschiedenis verder
     }
+    if (ping) return new Response(JSON.stringify({ ok: true, history: hs, lap: d.currentLap }), {
+      headers: { ...CORS, "Content-Type": "application/json", "Cache-Control": "no-store", "X-LMS-History": hs },
+    });
     return new Response(JSON.stringify(d), {
       headers: {
         ...CORS,

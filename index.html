@@ -174,7 +174,7 @@ footer a { color: inherit; }
 const $ = id => document.getElementById(id);
 
 // De API van Upfront stuurt geen CORS-headers. Online loopt het via de
-// Vercel-functie (api/lms-live.js), lokaal via server.bb. Na het deployen:
+// Vercel-functie (api/lms-live.js), lokaal via server.clj. Na het deployen:
 // zet hier de URL van je Vercel-project.
 const VERCEL_URL = "https://upfront-live.vercel.app/api/lms-live";
 const LOCAL = ["localhost", "127.0.0.1", ""].includes(location.hostname);

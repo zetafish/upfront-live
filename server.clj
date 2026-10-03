@@ -2,7 +2,7 @@
 ;; Lokale ontwikkelserver voor de Last Man Standing live-pagina.
 ;; Serveert index.html en geeft de API van Upfront door met CORS-headers,
 ;; net als de Cloudflare Worker online doet.
-;; Start: bb server.bb   -> http://localhost:8787
+;; Start: bb server.clj   -> http://localhost:8787
 (require '[babashka.http-client :as http]
          '[org.httpkit.server :as server]
          '[clojure.java.io :as io])

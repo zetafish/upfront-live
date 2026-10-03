@@ -1,7 +1,7 @@
 #!/usr/bin/env bb
 ;; Last Man Standing live: hoe ver is iedere loper?
-;; Gebruik: bb lms.bb            (alle lopers in de race)
-;;          bb lms.bb --all      (ook uitgevallen lopers)
+;; Gebruik: bb lms.clj            (alle lopers in de race)
+;;          bb lms.clj --all      (ook uitgevallen lopers)
 (require '[babashka.http-client :as http]
          '[cheshire.core :as json]
          '[clojure.string :as str])

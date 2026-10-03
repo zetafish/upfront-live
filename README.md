@@ -21,12 +21,12 @@ Op het gratis Hobby-plan van Vercel hoef je geen betaalgegevens op te geven. Elk
 ## Lokaal draaien
 
 ```sh
-bb server.bb      # http://localhost:8787
+bb server.clj      # http://localhost:8787
 ```
 
-`server.bb` serveert de pagina en geeft de API door met CORS-headers, net als de Vercel-functie. Op `localhost` gebruikt de pagina automatisch deze server.
+`server.clj` serveert de pagina en geeft de API door met CORS-headers, net als de Vercel-functie. Op `localhost` gebruikt de pagina automatisch deze server.
 
-`bb lms.bb` toont de stand in de terminal (`--all` laat ook uitgevallen lopers zien).
+`bb lms.clj` toont de stand in de terminal (`--all` laat ook uitgevallen lopers zien).
 
 ## Publiceren
 

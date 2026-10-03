@@ -146,6 +146,12 @@ dialog.detail::backdrop { background: rgb(8 16 20 / .55); }
 .laptable td, .laptable th { padding: 4px 10px 4px 0; }
 .laptable { min-width: 0; }
 .laptable .pos { color: var(--muted); }
+.disclaimer { margin: -8px 0 0; color: var(--muted); font-size: 14px; }
+.linkbtn { font: inherit; color: var(--fg); background: none; border: none; padding: 0; cursor: pointer;
+  text-decoration: underline; text-decoration-color: var(--accent); text-underline-offset: 3px; font-weight: 600; }
+.how section h4 { margin: 0 0 4px; font: 800 18px/1.1 var(--display); text-transform: uppercase; letter-spacing: .02em; }
+.how section p { margin: 0; max-width: 65ch; }
+.how a { color: inherit; }
 .faster { color: var(--done); } .slower { color: var(--late); }
 
 .err { color: var(--late); font-weight: 600; }
@@ -206,6 +212,9 @@ details.data td, details.data th { padding: 3px 12px 3px 0; }
     </div>
   </header>
 
+  <p class="disclaimer">Onofficiële stand, berekend uit de live data van Upfront. Kan afwijken van de officiële uitslag.
+    <button type="button" class="linkbtn" id="howBtn">Hoe we rekenen</button></p>
+
   <div class="summary" id="summary"><span class="note">Stand laden…</span></div>
 
   <section class="panel">
@@ -258,6 +267,29 @@ details.data td, details.data th { padding: 3px 12px 3px 0; }
     </div>
   </section>
 
+  <dialog class="detail" id="how" aria-labelledby="howTitle">
+    <div class="detail-head">
+      <div><h3 id="howTitle">Hoe we rekenen</h3>
+        <div class="sub">Deze pagina leest de live data van Upfront en rekent zelf. Officieel is alleen de uitslag van de organisatie.</div></div>
+      <button type="button" class="detail-close" id="howClose" aria-label="Sluiten">×</button>
+    </div>
+    <div class="detail-body how">
+      <section><h4>Rondes</h4>
+        <p>We tellen rondes uit de finishtijden. De tijdwaarneming mist soms een doorkomst. Wie daarna nog een ronde finisht, heeft de gemiste ronde ook gelopen, dus die tellen we mee. Een finish in de eerste 30 minuten van een uur hoort bij de ronde ervoor: die loper was te laat binnen.</p></section>
+      <section><h4>Uitgevallen</h4>
+        <p>Wie een ronde niet binnen het uur afmaakt, ligt eruit. Officieel telt iemand pas als uitgevallen als de organisatie dat heeft verwerkt. Daarom is ons aantal lopers in de race vaak lager dan het officiële.</p></section>
+      <section><h4>Niet vertrokken</h4>
+        <p>Op basis van GPS: wie 5 minuten na de start nog naast het parcours bij start en finish staat, of na 10 minuten nog binnen 150 meter van de start, is niet aan de ronde begonnen.</p></section>
+      <section><h4>Positie in de ronde</h4>
+        <p>De GPS-positie, geprojecteerd op het parcours. GPS kan tientallen meters afwijken, en een tracker die stilstaat of geen bereik heeft, geeft een oude positie.</p></section>
+      <section><h4>Resterende tijd en te laat</h4>
+        <p>Een schatting op basis van het tempo in de huidige ronde. In het eerste kwart van de ronde gebruiken we het gemiddelde van de loper zelf, omdat veel lopers dan nog wandelen.</p></section>
+      <section><h4>Rondetijden</h4>
+        <p>Na een gemiste doorkomst geeft de bron soms een rondetijd van meer dan een uur. Bij lopers die daarna nog doorliepen kan dat niet kloppen, dus die tijden laten we weg.</p></section>
+      <p class="note">Zie je iets dat niet klopt? Meld het op <a href="https://github.com/zetafish/upfront-live/issues" target="_blank" rel="noopener">GitHub</a>.</p>
+    </div>
+  </dialog>
+
   <dialog class="detail" id="detail" aria-labelledby="detailName">
     <div class="detail-head">
       <div><h3 id="detailName"></h3><div class="sub" id="detailSub"></div></div>
@@ -268,8 +300,7 @@ details.data td, details.data th { padding: 3px 12px 3px 0; }
 
   <footer>
     Data: <a href="https://event.upfront.nl/lms-live" target="_blank" rel="noopener">event.upfront.nl/lms-live</a>.
-    De officiële “in race”-teller van de API telt uitgevallen lopers mee; deze pagina rekent zelf: wie een ronde mist, ligt eruit.
-    Positie in de ronde is berekend uit GPS, geprojecteerd op het parcours. <span id="updated"></span>
+    <span id="updated"></span>
     <p class="credits">Gemaakt door <a href="https://github.com/zetafish" target="_blank" rel="noopener">Endymion Kasanardjo</a>
       · broncode op <a href="https://github.com/zetafish/upfront-live" target="_blank" rel="noopener">GitHub</a></p>
   </footer>
@@ -755,6 +786,9 @@ function drawLapChart(r, field) {
   });
 }
 
+$("howBtn").addEventListener("click", () => $("how").showModal());
+$("howClose").addEventListener("click", () => $("how").close());
+$("how").addEventListener("click", e => { if (e.target === $("how")) $("how").close(); });
 $("detailClose").addEventListener("click", () => $("detail").close());
 $("detail").addEventListener("click", e => { if (e.target === $("detail")) $("detail").close(); });   // klik op de achtergrond
 $("detail").addEventListener("close", () => { detailBib = null; });

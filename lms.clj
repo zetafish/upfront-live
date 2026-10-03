@@ -9,7 +9,8 @@
               :body (json/parse-string true)))
 
 (def points (-> data :course :points))
-(def lap-m (-> data :course :distance))
+(def lap-m (-> data :course :distance))   ; GPS-route, alleen voor de positie
+(def official-m 6706)                     ; officiële rondeafstand (4,167 mijl)
 
 (defn xy [lat lng]
   ;; equirectangular projectie in meters, prima op deze schaal
@@ -79,14 +80,16 @@
                    (or (< along 150) stale? too-early?)
                    (> elapsed (if (> off 50) 300 600)))
         in-lap (cond done? lap-m camp? 0 along along :else 0)
-        total-km (/ (+ (* (min n (dec cur-lap)) lap-m) (if out? 0 in-lap)) 1000)]
+        ;; in officiële km: hele rondes x 6,706 + het deel van de huidige ronde
+        in-lap-km (/ (* official-m (/ in-lap lap-m)) 1000)
+        total-km (+ (/ (* (min n (dec cur-lap)) official-m) 1000) (if out? 0 in-lap-km))]
     {:bib (:bib r) :name (:name r) :laps n
      :gemist (when (not= n (:laps r)) (- n (:laps r)))
      :ronde (cond (not in?) (if (= 4 (:status r)) (str "uit in " (:outInLap r)) (status-name (:status r)))
                   out? (str "uit na ronde " n)
                   done? "binnen, wacht"
                   camp? (if (> elapsed 300) "niet vertrokken" "bij de start")
-                  :else (format "%4.0f%% (%.2f km)" (* 100 (/ in-lap lap-m)) (/ in-lap 1000)))
+                  :else (format "%4.0f%% (%.2f km)" (* 100 (/ in-lap lap-m)) (double in-lap-km)))
      ;; in de eerste minuten staat iedereen bij de start: dat telt als in de race
      :state (cond out? 3 done? 0 (and camp? (> elapsed 300)) 2 :else 1)
      :progress (if (and along (not camp?)) along 0)

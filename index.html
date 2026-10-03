@@ -9,7 +9,7 @@
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <style>
 /* Layout: wedstrijdbord. Klok en ronde bovenaan, dan waar het veld nu is
-   (strook 0–6,6 km + kaart), daaronder het volledige klassement. */
+   (strook 0–6,6 km + kaart), daaronder alle lopers. */
 :root {
   --bg: #eef1f2;          /* zeemist */
   --surface: #ffffff;
@@ -89,7 +89,7 @@ tbody tr.sel { background: color-mix(in srgb, var(--accent) 12%, transparent); }
 tbody tr.out td { color: var(--muted); }
 td.num, th.num { text-align: right; }
 td.name { font-weight: 600; white-space: normal; min-width: 160px; }
-td.bib { color: var(--muted); }
+td.bib, td.cnt { color: var(--muted); }
 
 .pill { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; padding: 2px 9px; border-radius: 999px; }
 .pill.done { color: var(--done); background: color-mix(in srgb, var(--done) 14%, transparent); }
@@ -251,7 +251,7 @@ details.data td, details.data th { padding: 3px 12px 3px 0; }
   </section>
 
   <section class="panel">
-    <h2>Klassement <span class="hint">Klik op een grafiekje voor alle rondetijden</span></h2>
+    <h2>Lopers <span class="hint">Volgorde: wie in deze ronde het verst is · klik op een grafiekje voor alle rondetijden</span></h2>
     <div class="controls">
       <input type="search" id="q" placeholder="Zoek naam of startnummer" aria-label="Zoek loper">
       <label class="toggle"><input type="checkbox" id="showOut"> toon uitgevallen lopers</label>
@@ -259,7 +259,7 @@ details.data td, details.data th { padding: 3px 12px 3px 0; }
     <div class="tablewrap">
       <table>
         <thead><tr>
-          <th class="num">#</th><th>Bib</th><th>Naam</th><th class="num">Rondes</th>
+          <th class="num" title="Telnummer van de lopers die nog in de race zijn">#</th><th>Bib</th><th>Naam</th><th class="num">Rondes</th>
           <th>Huidige ronde</th><th class="num">Km</th><th class="num">Laatste</th><th class="num">Snelste</th><th>Rondetijden</th>
         </tr></thead>
         <tbody id="rows"></tbody>
@@ -280,6 +280,8 @@ details.data td, details.data th { padding: 3px 12px 3px 0; }
         <p>Wie een ronde niet binnen het uur afmaakt, ligt eruit. Officieel telt iemand pas als uitgevallen als de organisatie dat heeft verwerkt. Daarom is ons aantal lopers in de race vaak lager dan het officiële.</p></section>
       <section><h4>Niet vertrokken</h4>
         <p>Op basis van GPS: wie 5 minuten na de start nog naast het parcours bij start en finish staat, of na 10 minuten nog binnen 150 meter van de start, is niet aan de ronde begonnen. Start en finish zijn hetzelfde punt, dus wie daar later in de ronde staat, telt alleen als bijna binnen als we hem deze ronde op het parcours zagen, of als hij op zijn eigen tempo al binnen kan zijn.</p></section>
+      <section><h4>Kilometers</h4>
+        <p>We rekenen met de officiële rondeafstand van 6,706 km: 24 rondes zijn precies 100 mijl. De GPS-route in de data is iets korter, omdat GPS bochten afsnijdt. Die gebruiken we alleen om te bepalen hoe ver iemand in de ronde is.</p></section>
       <section><h4>Positie in de ronde</h4>
         <p>De GPS-positie, geprojecteerd op het parcours. GPS kan tientallen meters afwijken, en een tracker die stilstaat of geen bereik heeft, geeft een oude positie.</p></section>
       <section><h4>Resterende tijd en te laat</h4>
@@ -308,7 +310,7 @@ details.data td, details.data th { padding: 3px 12px 3px 0; }
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script type="module">
-import { MID, buildSegs, project, makeLapOf, lapInfo } from "./lib/course.js";
+import { MID, LAP_M, buildSegs, project, makeLapOf, lapInfo } from "./lib/course.js";
 
 const $ = id => document.getElementById(id);
 
@@ -392,7 +394,7 @@ function enrich(d, now, trail = null) {
     (b.progress ?? 0) - (a.progress ?? 0) || (a.last ?? 99999) - (b.last ?? 99999));
 
   return {
-    generatedAt: d.generatedAt, fetchedAt: now, currentLap: cur, lapStartedAt: lapStart, lapMeters: lapM,
+    generatedAt: d.generatedAt, fetchedAt: now, currentLap: cur, lapStartedAt: lapStart, lapMeters: LAP_M, courseMeters: lapM,
     finished: d.finished, winner: d.winner, fastestLap: d.fastestLap, starters: d.starters, apiInRace: d.inRace,
     course: d.course.points.map(p => [p.lat, p.lng]), runners,
   };
@@ -420,7 +422,7 @@ const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "
 
 function totalMeters(r) {
   const full = Math.min(r.laps, D.currentLap - (r.state === "done" ? 0 : 1)) * D.lapMeters;
-  return full + (r.state === "running" ? r.along : 0);
+  return full + (r.state === "running" ? r.progress * D.lapMeters : 0);
 }
 
 function stateColor(r) {
@@ -511,7 +513,7 @@ function renderStrip() {
   // stapel lopers die dicht bij elkaar zitten
   const lanes = [];
   const dots = runners.sort((a, b) => a.along - b.along).map(r => {
-    const x = r.along / L_ * 100;
+    const x = r.progress * 100;
     let lane = 0; while (lanes[lane] !== undefined && x - lanes[lane] < 0.9) lane++;
     lanes[lane] = x;
     const y = 40 - (lane % 7) * 6;
@@ -568,9 +570,10 @@ function renderTable() {
     if ((r.state === "out" || r.state === "dns") && !showOut && !q) return false;
     return !q || r.name.toLowerCase().includes(q) || r.bib.includes(q);
   }).map(r => {
-    const pos = r.state === "out" || r.state === "dns" ? "" : ++n;
+    // telnummer, geen positie: wie nog loopt, staat gelijk
+    const cnt = r.state === "out" || r.state === "dns" ? "" : ++n;
     return `<tr data-bib="${esc(r.bib)}" tabindex="0" class="${r.state === "out" || r.state === "dns" ? "out" : ""} ${r.late ? "late" : ""} ${r.bib === selected ? "sel" : ""}">
-      <td class="num">${pos}</td><td class="bib">${esc(r.bib)}</td><td class="name">${esc(r.name)}</td>
+      <td class="num cnt">${cnt}</td><td class="bib">${esc(r.bib)}</td><td class="name">${esc(r.name)}</td>
       <td class="num">${r.laps}</td><td>${statusCell(r)}</td><td class="num">${km(totalMeters(r))}</td>
       <td class="num">${r.last ? mmss(r.last) : "–"}</td><td class="num">${r.best ? mmss(r.best) : "–"}</td>
       <td>${r.lapTimes.length >= 2 ? `<button type="button" class="sparkbtn" data-bib="${esc(r.bib)}" title="Alle rondetijden bekijken" aria-label="Rondetijden van ${esc(r.name)} bekijken">${spark(r.lapTimes)}<span class="chev" aria-hidden="true">›</span></button>` : ""}</td></tr>`;

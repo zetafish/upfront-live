@@ -3,7 +3,7 @@
 Live stand van [Last Man Standing](https://event.upfront.nl/lms-live) op Terschelling, met:
 - wie er echt nog in de race zit (de officiële teller telt uitgevallen lopers mee)
 - hoe ver iedere loper in de huidige ronde is
-- een kaart van het parcours en het hele klassement
+- een kaart van het parcours en een lijst van alle lopers
 
 Hoe ver iemand is, wordt berekend uit de GPS-positie, geprojecteerd op het parcours.
 

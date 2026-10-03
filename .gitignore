@@ -1,8 +1,23 @@
 server.log
 out.txt
 live.json
-.wrangler/
 node_modules/
 .DS_Store
 .clj-kondo/
 .lsp/
+
+# Vim
+*.swp
+*.swo
+*.swn
+Session.vim
+.netrwhist
+
+# Emacs
+*~
+\#*\#
+.#*
+.\#*
+
+# Vercel
+.vercel/

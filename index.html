@@ -104,6 +104,47 @@ td.bib { color: var(--muted); }
 svg.spark { display: block; }
 svg.spark polyline { fill: none; stroke: var(--muted); stroke-width: 1.3; }
 svg.spark circle { fill: var(--accent); }
+.sparkbtn { display: block; padding: 2px 4px; margin: -2px -4px; border: 1px solid transparent; border-radius: 6px;
+  background: none; cursor: zoom-in; color: inherit; }
+.sparkbtn:hover { border-color: var(--line); background: var(--bg); }
+.sparkbtn:hover svg.spark polyline { stroke: var(--c-in); }
+
+dialog.detail { border: none; border-radius: 12px; padding: 0; width: min(780px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px); background: var(--surface); color: var(--fg); box-shadow: 0 20px 60px rgb(0 0 0 / .3); }
+dialog.detail::backdrop { background: rgb(8 16 20 / .55); }
+.detail-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 18px 20px 12px;
+  border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--surface); z-index: 1; }
+.detail-head h3 { margin: 0; font: 800 28px/1 var(--display); text-transform: uppercase; letter-spacing: .01em; text-wrap: balance; }
+.detail-head .sub { color: var(--muted); font-size: 14px; margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; }
+.detail-close { border: 1px solid var(--line); background: var(--bg); color: var(--fg); border-radius: 8px;
+  width: 36px; height: 36px; font-size: 20px; line-height: 1; cursor: pointer; flex: none; }
+.detail-body { padding: 16px 20px 20px; display: grid; gap: 18px; }
+.kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px 12px; }
+@media (max-width: 560px) { .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } .detail-head h3 { font-size: 24px; } }
+.detail-body > * { min-width: 0; }
+.kpis div { display: grid; gap: 2px; }
+.kpis b { font: 800 26px/1 var(--display); font-variant-numeric: tabular-nums; }
+.kpis small { color: var(--muted); font-size: 12px; }
+.lapchart { position: relative; }
+.lapchart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.lapchart .grid line { stroke: var(--line); }
+.lapchart .axis text { fill: var(--muted); font: 500 11px var(--body); font-variant-numeric: tabular-nums; }
+.lapchart .limit { stroke: var(--late); stroke-width: 1.5; stroke-dasharray: 5 4; }
+.lapchart .limit-lbl { fill: var(--late); font: 600 11px var(--body); }
+.lapchart .median { fill: none; stroke: var(--muted); stroke-width: 1.5; stroke-dasharray: 4 3; }
+.lapchart .runner { fill: none; stroke: var(--c-in); stroke-width: 2; stroke-linejoin: round; }
+.lapchart .pt { fill: var(--c-in); stroke: var(--surface); stroke-width: 2; }
+.lapchart .pt.best { fill: var(--done); }
+.lapchart .cross { stroke: var(--fg); stroke-width: 1; opacity: .35; visibility: hidden; }
+.lapchart .cross.on { visibility: visible; }
+.lapchart .pt.on { stroke: var(--fg); }
+.legend .ln { width: 18px; height: 0; border-top: 2px solid var(--c-in); display: inline-block; }
+.legend .ln.dash { border-top: 2px dashed var(--muted); }
+.legend .ln.lim { border-top: 2px dashed var(--late); }
+.laptable td, .laptable th { padding: 4px 10px 4px 0; }
+.laptable { min-width: 0; }
+.laptable .pos { color: var(--muted); }
+.faster { color: var(--done); } .slower { color: var(--late); }
 
 .err { color: var(--late); font-weight: 600; }
 .update[hidden] { display: none; }
@@ -215,6 +256,14 @@ details.data td, details.data th { padding: 3px 12px 3px 0; }
     </div>
   </section>
 
+  <dialog class="detail" id="detail" aria-labelledby="detailName">
+    <div class="detail-head">
+      <div><h3 id="detailName"></h3><div class="sub" id="detailSub"></div></div>
+      <button type="button" class="detail-close" id="detailClose" aria-label="Sluiten">×</button>
+    </div>
+    <div class="detail-body" id="detailBody"></div>
+  </dialog>
+
   <footer>
     Data: <a href="https://event.upfront.nl/lms-live" target="_blank" rel="noopener">event.upfront.nl/lms-live</a>.
     De officiële “in race”-teller van de API telt uitgevallen lopers mee; deze pagina rekent zelf: wie een ronde mist, ligt eruit.
@@ -284,6 +333,7 @@ function enrich(d, now) {
     const base = {
       bib: r.bib, name: r.name, laps: r.laps, lat: r.lat, lng: r.lng, kmh: r.speedKmh,
       ping: r.lastPingAt, avg: Math.round(avg), lapTimes: times,
+      lapDetail: (r.lapTimes || []).map(t => ({ lap: t.lap, s: t.seconds, pace: t.paceSecPerKm, at: t.finishedAt })),
       best: times.length ? Math.min(...times) : null, last: times.at(-1) ?? null,
     };
     // status 0/3 zonder rondes: niet gestart (telt niet mee als starter)
@@ -482,12 +532,16 @@ function renderTable() {
       <td class="num">${pos}</td><td class="bib">${esc(r.bib)}</td><td class="name">${esc(r.name)}</td>
       <td class="num">${r.laps}</td><td>${statusCell(r)}</td><td class="num">${km(totalMeters(r))}</td>
       <td class="num">${r.last ? mmss(r.last) : "–"}</td><td class="num">${r.best ? mmss(r.best) : "–"}</td>
-      <td>${spark(r.lapTimes)}</td></tr>`;
+      <td>${r.lapTimes.length >= 2 ? `<button type="button" class="sparkbtn" data-bib="${esc(r.bib)}" title="Details bekijken" aria-label="Rondetijden van ${esc(r.name)} bekijken">${spark(r.lapTimes)}</button>` : ""}</td></tr>`;
   });
   $("rows").innerHTML = rows.join("") || `<tr><td colspan="9" class="note">Geen lopers gevonden.</td></tr>`;
   $("rows").querySelectorAll("tr[data-bib]").forEach(tr => {
     tr.addEventListener("click", () => select(tr.dataset.bib));
     tr.addEventListener("keydown", e => { if (e.key === "Enter") select(tr.dataset.bib); });
+  });
+  $("rows").querySelectorAll(".sparkbtn").forEach(b => {
+    b.addEventListener("click", e => { e.stopPropagation(); openDetail(b.dataset.bib); });
+    b.addEventListener("keydown", e => e.stopPropagation());
   });
   $("tableNote").textContent = "ETA = geschatte resterende tijd op huidig tempo";
 }
@@ -500,6 +554,163 @@ function select(bib) {
   const r = D.runners.find(x => x.bib === selected);
   if (map && r?.lat != null) map.setView([r.lat, r.lng], Math.max(map.getZoom(), 15));
 }
+
+// --- detailvenster per loper ---------------------------------------------------
+
+let detailBib = null;
+
+// per ronde: alle rondetijden van het veld, gesorteerd (voor mediaan en positie)
+function fieldLaps() {
+  const byLap = new Map();
+  for (const r of D.runners) for (const t of r.lapDetail) {
+    if (!byLap.has(t.lap)) byLap.set(t.lap, []);
+    byLap.get(t.lap).push(t.s);
+  }
+  for (const a of byLap.values()) a.sort((x, y) => x - y);
+  return byLap;
+}
+const median = a => a.length ? (a.length % 2 ? a[(a.length - 1) / 2] : (a[a.length / 2 - 1] + a[a.length / 2]) / 2) : null;
+const hm = s => { s = Math.round(s / 60); return `${Math.floor(s / 60)}u ${String(s % 60).padStart(2, "0")}m`; };
+const signed = s => (s < 0 ? "−" : "+") + mmss(Math.abs(s));
+const pace = s => `${mmss(s)} /km`;
+
+function openDetail(bib) {
+  detailBib = bib;
+  renderDetail();
+  const dlg = $("detail");
+  if (!dlg.open) dlg.showModal();
+}
+
+function renderDetail() {
+  const r = D.runners.find(x => x.bib === detailBib);
+  if (!r) return;
+  const laps = r.lapDetail, field = fieldLaps();
+  const secs = laps.map(t => t.s);
+  const best = secs.length ? Math.min(...secs) : null;
+  const avg = secs.length ? secs.reduce((a, b) => a + b, 0) / secs.length : null;
+  // marge: hoeveel rust er per ronde overblijft tot de limiet, over de laatste 3 rondes
+  const k = Math.min(3, secs.length);
+  const margin = k ? 3600 - secs.slice(-k).reduce((a, b) => a + b, 0) / k : null;
+  const rest = laps.reduce((a, t) => a + Math.max(0, 3600 - t.s), 0);
+  const lastAll = laps.length ? field.get(laps.at(-1).lap) || [] : [];
+  const lastPos = laps.length ? [lastAll.indexOf(laps.at(-1).s) + 1, lastAll.length] : null;
+  const avgPace = laps.length ? laps.reduce((a, t) => a + t.pace, 0) / laps.length : null;
+
+  $("detailName").textContent = r.name;
+  $("detailSub").innerHTML = `<span>Startnummer ${esc(r.bib)}</span>${statusCell(r)}`;
+
+  const kpi = (v, label, sub = "") => `<div><small>${label}</small><b>${v}</b>${sub ? `<small>${sub}</small>` : ""}</div>`;
+  const kpis = [
+    kpi(r.laps, "Rondes"),
+    kpi(km(totalMeters(r)), "Kilometer"),
+    kpi(best ? mmss(best) : "–", "Snelste ronde", best ? `ronde ${laps.find(t => t.s === best).lap}` : ""),
+    kpi(avg ? mmss(avg) : "–", "Gemiddeld", avgPace ? pace(avgPace) : ""),
+    kpi(r.last ? mmss(r.last) : "–", "Laatste ronde"),
+    kpi(margin == null ? "–" : `<span class="${margin < 300 ? "slower" : ""}">${mmss(margin)}</span>`, "Marge",
+        margin == null ? "" : `rust per ronde, gem. laatste ${k}`),
+    kpi(hm(rest), "Totale rust", "tussen finish en volgende start"),
+    kpi(lastPos ? `${lastPos[0]}<small style="font:500 14px var(--body)"> / ${lastPos[1]}</small>` : "–", "Positie laatste ronde", lastPos ? `ronde ${laps.at(-1).lap}` : ""),
+  ].join("");
+
+  const rows = laps.map(t => {
+    const all = field.get(t.lap) || [], med = median(all);
+    const pos = all.indexOf(t.s) + 1, diff = med == null ? null : t.s - med;
+    return `<tr><td class="num">${t.lap}</td><td class="num">${mmss(t.s)}</td><td class="num">${pace(t.pace)}</td>
+      <td class="num">${mmss(Math.max(0, 3600 - t.s))}</td><td class="num pos">${pos} / ${all.length}</td>
+      <td class="num ${diff > 0 ? "slower" : "faster"}">${diff == null ? "–" : signed(diff)}</td></tr>`;
+  }).reverse().join("");
+
+  $("detailBody").innerHTML = `
+    <div class="kpis">${kpis}</div>
+    <div>
+      <div class="lapchart" id="lapchart"></div>
+      <div class="legend">
+        <span><i class="ln"></i>${esc(r.name.split(" ")[0])}</span>
+        <span><i class="ln dash"></i>mediaan van het veld</span>
+        <span><i class="ln lim"></i>limiet 60:00</span>
+        <span><i class="dot" style="background:var(--done)"></i>snelste ronde</span>
+      </div>
+    </div>
+    <details class="data"><summary>Alle rondes</summary><div class="tablewrap">
+      <table class="laptable"><thead><tr><th class="num">Ronde</th><th class="num">Tijd</th><th class="num">Tempo</th>
+      <th class="num">Rust</th><th class="num">Positie</th><th class="num">t.o.v. mediaan</th></tr></thead>
+      <tbody>${rows || `<tr><td colspan="6" class="note">Nog geen rondes.</td></tr>`}</tbody></table></div></details>`;
+  requestAnimationFrame(() => drawLapChart(r, field));
+}
+
+function drawLapChart(r, field) {
+  const box = $("lapchart");
+  if (!box) return;
+  const laps = r.lapDetail;
+  if (laps.length < 1) { box.innerHTML = `<p class="note">Nog geen rondetijden.</p>`; return; }
+  const meds = laps.map(t => median(field.get(t.lap) || []));
+  const W = Math.max(280, box.clientWidth), H = 260, m = { l: 44, r: 12, t: 14, b: 26 };
+  const pw = W - m.l - m.r, ph = H - m.t - m.b;
+  const vals = [...laps.map(t => t.s), ...meds.filter(v => v != null)];
+  const lo = Math.max(0, Math.floor((Math.min(...vals) - 60) / 300) * 300), hi = 3600;
+  const n = laps.length;
+  const x = i => m.l + (n === 1 ? pw / 2 : i / (n - 1) * pw);
+  const yy = s => m.t + ph - (Math.min(s, hi) - lo) / (hi - lo) * ph;
+  const best = Math.min(...laps.map(t => t.s));
+
+  let grid = "", axis = "";
+  for (let s = lo; s <= hi; s += 300) {
+    grid += `<line x1="${m.l}" x2="${W - m.r}" y1="${yy(s)}" y2="${yy(s)}"/>`;
+    axis += `<text x="${m.l - 6}" y="${yy(s) + 4}" text-anchor="end">${mmss(s)}</text>`;
+  }
+  const every = n <= 20 ? 1 : n <= 40 ? 2 : 5;
+  laps.forEach((t, i) => { if (t.lap % every === 0 || i === 0 || i === n - 1)
+    axis += `<text x="${x(i)}" y="${H - 6}" text-anchor="middle">${t.lap}</text>`; });
+
+  const medPts = meds.map((v, i) => v == null ? null : `${x(i)},${yy(v)}`).filter(Boolean).join(" ");
+  const runPts = laps.map((t, i) => `${x(i)},${yy(t.s)}`).join(" ");
+  const pts = laps.map((t, i) => `<circle class="pt ${t.s === best ? "best" : ""}" data-i="${i}" cx="${x(i)}" cy="${yy(t.s)}" r="4"/>`).join("");
+
+  box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Rondetijden per ronde">
+    <g class="grid">${grid}</g><g class="axis">${axis}</g>
+    <line class="limit" x1="${m.l}" x2="${W - m.r}" y1="${yy(hi)}" y2="${yy(hi)}"/>
+    <text class="limit-lbl" x="${W - m.r}" y="${yy(hi) - 5}" text-anchor="end">limiet 60:00</text>
+    <polyline class="median" points="${medPts}"/>
+    <polyline class="runner" points="${runPts}"/>
+    <line class="cross" id="lapCross" y1="${m.t}" y2="${m.t + ph}" x1="-10" x2="-10"/>
+    ${pts}
+    <rect id="lapHit" x="${m.l - 10}" y="${m.t}" width="${pw + 20}" height="${ph}" fill="transparent"/>
+  </svg><div class="tip" hidden></div>`;
+
+  const tip = box.querySelector(".tip"), cross = box.querySelector("#lapCross");
+  const show = i => {
+    const t = laps[i], all = field.get(t.lap) || [], med = meds[i];
+    cross.setAttribute("x1", x(i)); cross.setAttribute("x2", x(i)); cross.classList.add("on");
+    box.querySelectorAll(".pt").forEach(p => p.classList.toggle("on", +p.dataset.i === i));
+    const row = (k, v) => `<div class="row"><span>${k}</span><span>${v}</span></div>`;
+    tip.innerHTML = `<b>Ronde ${t.lap}</b>
+      ${row("Tijd", mmss(t.s))}${row("Tempo", pace(t.pace))}${row("Rust", mmss(Math.max(0, 3600 - t.s)))}
+      ${row("Positie", `${all.indexOf(t.s) + 1} / ${all.length}`)}
+      ${med != null ? row("t.o.v. mediaan", signed(t.s - med)) : ""}
+      <div class="names">Binnen om ${new Date(t.at).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" })}</div>`;
+    tip.hidden = false;
+    const bw = box.clientWidth, tw = tip.offsetWidth;
+    const px = x(i) / W * bw;
+    tip.style.left = (px + 14 + tw > bw ? px - tw - 14 : px + 14) + "px";
+    tip.style.top = "8px";
+  };
+  const hit = box.querySelector("#lapHit");
+  hit.addEventListener("mousemove", e => {
+    const rect = hit.getBoundingClientRect();
+    const sx = (e.clientX - rect.left) / rect.width * (pw + 20) + m.l - 10;
+    let best = 0, bd = Infinity;
+    laps.forEach((_, i) => { const d = Math.abs(x(i) - sx); if (d < bd) { bd = d; best = i; } });
+    show(best);
+  });
+  hit.addEventListener("mouseleave", () => {
+    tip.hidden = true; cross.classList.remove("on");
+    box.querySelectorAll(".pt.on").forEach(p => p.classList.remove("on"));
+  });
+}
+
+$("detailClose").addEventListener("click", () => $("detail").close());
+$("detail").addEventListener("click", e => { if (e.target === $("detail")) $("detail").close(); });   // klik op de achtergrond
+$("detail").addEventListener("close", () => { detailBib = null; });
 
 // --- uitval per ronde ---------------------------------------------------------
 
@@ -626,7 +837,7 @@ function renderDrops() {
 let dropsW = 0;
 new ResizeObserver(() => { const w = $("drops").clientWidth; if (D && w !== dropsW) { dropsW = w; renderDrops(); } }).observe($("drops"));
 
-function render() { renderClock(); renderSummary(); renderStrip(); renderFacts(); renderDrops(); renderTable(); drawMap(); }
+function render() { renderClock(); renderSummary(); renderStrip(); renderFacts(); renderDrops(); renderTable(); drawMap(); if ($("detail").open) renderDetail(); }
 
 async function load() {
   try {

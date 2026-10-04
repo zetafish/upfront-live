@@ -32,8 +32,6 @@ bb server.clj      # http://localhost:8787
 
 `server.clj` serveert de pagina en haalt de data via de Vercel-functie, met de geschiedenis uit Redis, zodat de indeling lokaal gelijk is aan online. Op `localhost` gebruikt de pagina automatisch deze server. Met `UPSTREAM=https://event.upfront.nl/api/lms-live` haalt hij de data rechtstreeks bij Upfront, zonder geschiedenis.
 
-`bb lms.clj` toont de stand in de terminal (`--all` laat ook uitgevallen lopers zien).
-
 ## Publiceren
 
 1. **De repo op GitHub zetten** en onder *Settings → Pages* de bron *Deploy from a branch* kiezen, met `main` / root.

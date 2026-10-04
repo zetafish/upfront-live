@@ -10,7 +10,6 @@ Er is geen build, geen dependencies en geen testsuite.
 
 ```sh
 bb server.clj          # dev-server op http://localhost:8787 (pagina + /lib + /api/lms-live)
-bb lms.clj [--all]     # stand in de terminal (--all: ook uitgevallen lopers)
 pkill -f 'bb server.clj'
 ```
 
@@ -40,12 +39,11 @@ GitHub Pages / upfront-live.vercel.app (index.html)
 - **`lib/course.js`:** gedeelde rekenregels, gebruikt door de pagina en door de functies:
   - `project()`: GPS → afstand langs het parcours, met keuze tussen kandidaten op basis van de verwachte positie;
   - `makeLapOf()`: bij welke ronde hoort een finishtijd;
-  - `lapInfo()`: rondes, gecorrigeerd voor gemiste doorkomsten;
+  - `lapInfo()`: rondes, gecorrigeerd voor gemiste doorkomsten en terugkeer naar de start;
   - `onCourse()`: is een positie geloofwaardig bewijs van vertrek;
   - `MID` = 150 m, `LAP_M` = 6706 m (officieel).
 - **`api/lms-live.js`:** proxy met CORS. Voegt `history` toe uit Redis, maar alleen als de race bezig is. De `X-LMS-History`-header zegt `ok`, `off`, `skip` of `error`. `?ping` doet hetzelfde werk maar geeft een klein antwoord, zonder cache; dat is voor de externe cron (cron-job.org, elke minuut), zodat de geschiedenis ook zonder kijkers doorloopt.
 - **`api/hit.js`:** unieke bezoekers met HyperLogLog. POST met een willekeurig id uit de browser; GET geeft het overzicht. `api/_redis.js` bevat de gedeelde Upstash-REST-client; een `_` voor de naam betekent geen eigen endpoint. De env-vars zijn `KV_REST_API_URL`/`KV_REST_API_TOKEN`, met als terugval `UPSTASH_REDIS_REST_*`.
-- **`lms.clj`:** een eigen Clojure-versie van dezelfde regels, zonder geschiedenis. Die wordt **niet** automatisch gedeeld: pas hem met de hand mee aan.
 
 ## Domeinregels (de lastige kant)
 
@@ -53,6 +51,7 @@ GitHub Pages / upfront-live.vercel.app (index.html)
 - `inRace` en `status` lopen uren achter.
 - `laps` telt geregistreerde doorkomsten, en de tijdwaarneming mist er soms een.
 - Na een gemiste doorkomst kan `seconds` meerdere uren beslaan.
+- `seconds` telt vanaf de laatste bel. Wie een ronde niet afmaakt en terugloopt naar de start, krijgt een korte "ronde" die `laps` meetelt. `returned()` (< 20 min, of < 60% van de laatste drie rondes) vangt dat af: is het de laatste doorkomst, dan telt hij niet als ronde en is de loper in die ronde uitgevallen.
 - `speedKmh` is onbetrouwbaar.
 - Per loper is er alleen de laatste GPS-positie, zonder spoor.
 
@@ -78,7 +77,7 @@ Meer dan 5 min niet gekeken betekent `gap`; dan gelden de regels die volledig vo
 
 **Kilometers** zijn officieel: rondes × 6,706 km. De GPS-route (`course.distance`, ~6,59 km) dient alleen voor de positie in de ronde.
 
-Verander je een indelingsregel, pas dan ook de tekst in het dialoogvenster "Hoe we rekenen" (`<dialog id="how">`) en `lms.clj` aan.
+Verander je een indelingsregel, pas dan ook de tekst in het dialoogvenster "Hoe we rekenen" (`<dialog id="how">`) aan.
 
 ## Publiceren
 

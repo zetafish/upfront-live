@@ -288,7 +288,7 @@ details.data td, details.data th { padding: 3px 12px 3px 0; }
       <section><h4>Resterende tijd en te laat</h4>
         <p>Een schatting op basis van het tempo in de huidige ronde. In het eerste kwart van de ronde gebruiken we het gemiddelde van de loper zelf, omdat veel lopers dan nog wandelen.</p></section>
       <section><h4>Rondetijden</h4>
-        <p>Na een gemiste doorkomst geeft de bron soms een rondetijd van meer dan een uur. Bij lopers die daarna nog doorliepen kan dat niet kloppen, dus die tijden laten we weg.</p></section>
+        <p>Na een gemiste doorkomst geeft de bron soms een rondetijd van meer dan een uur. Bij lopers die daarna nog doorliepen kan dat niet kloppen, dus die tijden laten we weg. Ook wie de ronde niet afmaakt en terugloopt naar de start, krijgt van de bron een rondetijd. Een tijd onder de 20 minuten, of onder 60% van het gemiddelde van iemands laatste drie rondes, is daarom geen ronde. Is het de laatste doorkomst, dan is de loper in die ronde uitgevallen en tellen we één ronde minder dan de officiële stand.</p></section>
       <p class="note">Zie je iets dat niet klopt? Meld het op <a href="https://github.com/zetafish/upfront-live/issues" target="_blank" rel="noopener">GitHub</a>.</p>
     </div>
   </dialog>
@@ -342,7 +342,7 @@ function enrich(d, now, trail = null) {
   const lapOf = makeLapOf(Date.parse(d.eventStart));
 
   const runners = d.runners.map(r => {
-    const { lapDetail, missed, laps, times, avg } = lapInfo(r, cur, lapOf);
+    const { lapDetail, missed, laps, times, avg, back } = lapInfo(r, cur, lapOf);
     const base = {
       bib: r.bib, name: r.name, laps, apiLaps: r.laps, missed, lat: r.lat, lng: r.lng, kmh: r.speedKmh,
       ping: r.lastPingAt, avg: Math.round(avg), lapTimes: times, lapDetail,
@@ -350,7 +350,7 @@ function enrich(d, now, trail = null) {
     };
     // status 0/3 zonder rondes: niet gestart (telt niet mee als starter)
     if (r.status !== 1 && r.status !== 4 && r.laps === 0) return { ...base, state: "dns" };
-    if (r.status !== 1) return { ...base, state: "out", outLap: r.outInLap ?? r.laps + 1 };
+    if (r.status !== 1) return { ...base, state: "out", outLap: back ? laps + 1 : r.outInLap ?? laps + 1 };
     if (laps >= cur) return { ...base, state: "done", progress: 1 };
     if (laps < cur - 1) return { ...base, state: "out", outLap: laps + 1 };
     if (r.lat == null) return { ...base, state: "unknown" };
@@ -404,6 +404,12 @@ function enrich(d, now, trail = null) {
              eta: Math.round(eta), late: elapsed + eta > 3600 };
   });
 
+  // Snelste ronde ooit: zelf bepalen, want de API telt ook rondes van wie
+  // terugliep naar de start (lapInfo laat die tijden weg).
+  let fastestLap = null;
+  for (const r of runners) for (const t of r.lapDetail)
+    if (t.s != null && !(t.s >= fastestLap?.seconds)) fastestLap = { seconds: t.s, bib: r.bib, name: r.name, lap: t.lap };
+
   const order = { done: 0, running: 1, start: 2, camp: 3, unknown: 4, out: 5, dns: 6 };
   runners.sort((a, b) =>
     order[a.state] - order[b.state] || b.laps - a.laps ||
@@ -411,7 +417,7 @@ function enrich(d, now, trail = null) {
 
   return {
     generatedAt: d.generatedAt, fetchedAt: now, currentLap: cur, lapStartedAt: lapStart, lapMeters: LAP_M, courseMeters: lapM,
-    finished: d.finished, winner: d.winner, fastestLap: d.fastestLap, starters: d.starters, apiInRace: d.inRace,
+    finished: d.finished, winner: d.winner, fastestLap, starters: d.starters, apiInRace: d.inRace,
     course: d.course.points.map(p => [p.lat, p.lng]), runners,
   };
 }
@@ -707,7 +713,10 @@ function renderDetail() {
   const rows = Array.from({ length: maxLap }, (_, i) => i + 1).map(k => {
     const t = byLap.get(k);
     if (!t) return `<tr><td class="num">${k}</td><td colspan="5" class="note">doorkomst niet geregistreerd</td></tr>`;
-    if (t.s == null) return `<tr><td class="num">${k}</td><td colspan="5" class="note">tijd onbekend (vorige doorkomst gemist) · binnen om ${new Date(t.at).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" })}</td></tr>`;
+    const at = new Date(t.at).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" });
+    // te kort: geen finish maar een terugkeer naar de start, hier viel hij uit
+    if (t.back != null) return `<tr><td class="num">${k}</td><td colspan="5" class="note">niet uitgelopen · om ${at} terug bij de start (de bron telt dit als ronde van ${mmss(t.back)})</td></tr>`;
+    if (t.s == null) return `<tr><td class="num">${k}</td><td colspan="5" class="note">tijd onbekend (vorige doorkomst gemist) · binnen om ${at}</td></tr>`;
     const all = field.get(t.lap) || [], med = lapMedian(field, t.lap);
     const pos = all.indexOf(t.s) + 1, diff = med == null ? null : t.s - med;
     return `<tr><td class="num">${t.lap}</td><td class="num">${mmss(t.s)}</td><td class="num">${pace(t.pace)}</td>

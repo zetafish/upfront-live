@@ -334,12 +334,14 @@ function enrich(d, now, trail = null) {
   const lapM = d.course.distance;
   const key = d.course.points.length + ":" + lapM;
   if (SEGS_KEY !== key) { SEGS = buildSegs(d.course.points); SEGS_KEY = key; }
-  const cur = d.currentLap;
-  const lapStart = Date.parse(d.currentLapStartedAt);
+  const lapOf = makeLapOf(Date.parse(d.eventStart));
+  // Afgelopen: de API telt de rondes door, maar de race eindigde met de laatste
+  // ronde van de winnaar. Die ronde is de "huidige", en iedereen behalve hij is uit.
+  const won = d.finished && d.winner?.bib ? d.winner : null;
+  const cur = won ? lapInfo(won, d.currentLap, lapOf).laps : d.currentLap;
+  const lapStart = won ? Date.parse(d.eventStart) + (cur - 1) * 3600000 : Date.parse(d.currentLapStartedAt);
   const elapsed = (now - lapStart) / 1000;
   if (trail && trail.lap !== cur) Object.assign(trail, { lap: cur, since: elapsed, gap: false, left: new Set(), zone: {} });
-
-  const lapOf = makeLapOf(Date.parse(d.eventStart));
 
   const runners = d.runners.map(r => {
     const { lapDetail, missed, laps, times, avg, back } = lapInfo(r, cur, lapOf);
@@ -350,6 +352,8 @@ function enrich(d, now, trail = null) {
     };
     // status 0/3 zonder rondes: niet gestart (telt niet mee als starter)
     if (r.status !== 1 && r.status !== 4 && r.laps === 0) return { ...base, state: "dns" };
+    if (won && r.bib === won.bib) return { ...base, state: "done", won: true, progress: 1, finishedAt: r.lastFinishedAt };
+    if (won) return { ...base, state: "out", outLap: back ? laps + 1 : r.outInLap ?? laps + 1 };
     if (r.status !== 1) return { ...base, state: "out", outLap: back ? laps + 1 : r.outInLap ?? laps + 1 };
     if (laps >= cur) return { ...base, state: "done", progress: 1 };
     if (laps < cur - 1) return { ...base, state: "out", outLap: laps + 1 };
@@ -417,7 +421,7 @@ function enrich(d, now, trail = null) {
 
   return {
     generatedAt: d.generatedAt, fetchedAt: now, currentLap: cur, lapStartedAt: lapStart, lapMeters: LAP_M, courseMeters: lapM,
-    finished: d.finished, winner: d.winner, fastestLap, starters: d.starters, apiInRace: d.inRace,
+    finished: !!won, winner: won, fastestLap, starters: d.starters, apiInRace: d.inRace,
     course: d.course.points.map(p => [p.lat, p.lng]), runners,
   };
 }
@@ -515,8 +519,17 @@ function drawMap() {
 
 function renderClock() {
   if (!D) return;
-  const el = (Date.now() - D.lapStartedAt) / 1000;
   $("lap").textContent = D.currentLap;
+  // afgelopen: de klok staat stil op de finish van de winnaar
+  if (D.finished) {
+    const w = D.runners.find(r => r.won);
+    $("elapsed").previousElementSibling.textContent = "Afgelopen";
+    $("elapsed").textContent = w?.finishedAt ? new Date(w.finishedAt).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" }) : "–";
+    $("countdown").previousElementSibling.textContent = "Winnaar";
+    $("countdown").textContent = w?.name ?? "–";
+    return;
+  }
+  const el = (Date.now() - D.lapStartedAt) / 1000;
   $("elapsed").textContent = mmss(el);
   $("countdown").textContent = mmss(3600 - el);
 }
@@ -527,6 +540,14 @@ function renderSummary() {
   const running = c("running") + c("start") + c("unknown"), late = D.runners.filter(r => r.state === "running" && r.late).length;
   const camp = c("camp"), back = D.runners.filter(r => r.state === "camp" && r.back != null).length;
   const alive = c("done") + running;
+  const w = D.runners.find(r => r.won);
+  if (w) {
+    $("summary").innerHTML = `
+      <span class="chip" style="font-size:16px">Afgelopen</span>
+      <span class="chip"><i class="dot" style="background:var(--done)"></i>Winnaar: ${esc(w.name)} · ${w.laps} rondes · ${km(totalMeters(w))} km</span>
+      <span class="chip">${c("out")} uit</span>`;
+    return;
+  }
   $("summary").innerHTML = `
     <span class="chip" style="font-size:16px">${alive} nog in de race</span>
     <span class="chip"><i class="dot" style="background:var(--done)"></i>${c("done")} binnen</span>
@@ -558,7 +579,7 @@ function renderStrip() {
   el.innerHTML = `<div class="track"></div>${ticks.join("")}<span class="finish">${done} binnen ▸</span>${dots.join("")}`;
   el.querySelectorAll(".r").forEach(n => n.addEventListener("click", () => select(n.dataset.bib)));
   const onCourse = runners.length - atStart;
-  $("stripNote").textContent = !runners.length ? "iedereen is binnen of in het kamp"
+  $("stripNote").textContent = D.finished ? "de race is afgelopen" : !runners.length ? "iedereen is binnen of in het kamp"
     : [onCourse ? `${onCourse} lopers op het parcours` : "", atStart ? `${atStart} bij de start` : ""].filter(Boolean).join(" · ");
 }
 
@@ -567,10 +588,11 @@ function renderFacts() {
   const fl = D.fastestLap;
   const facts = [
     ["Rondeafstand", `${km(D.lapMeters)} km`],
-    ["Totaal na deze ronde", `${km(D.lapMeters * D.currentLap)} km`],
+    [D.finished ? "Totaal" : "Totaal na deze ronde", `${km(D.lapMeters * D.currentLap)} km`],
     ["Snelste ronde ooit", fl ? `${mmss(fl.seconds)} · ${esc(fl.name)} (ronde ${fl.lap})` : "–"],
-    ["Snelste deze ronde", doneLaps.length ? mmss(Math.min(...doneLaps)) : "–"],
-    ["Gemiddeld deze ronde (binnen)", doneLaps.length ? mmss(doneLaps.reduce((a, b) => a + b, 0) / doneLaps.length) : "–"],
+    ...(D.finished ? [["Laatste ronde", doneLaps.length ? mmss(doneLaps[0]) : "–"]] : [
+      ["Snelste deze ronde", doneLaps.length ? mmss(Math.min(...doneLaps)) : "–"],
+      ["Gemiddeld deze ronde (binnen)", doneLaps.length ? mmss(doneLaps.reduce((a, b) => a + b, 0) / doneLaps.length) : "–"]]),
   ];
   if (D.winner) facts.unshift(["Winnaar", esc(D.winner.name ?? D.winner)]);
   const s = D.runners.find(r => r.bib === selected);
@@ -589,7 +611,7 @@ function spark(times) {
 
 function statusCell(r) {
   switch (r.state) {
-    case "done": return `<span class="pill done">binnen · wacht op start</span>`;
+    case "done": return r.won ? `<span class="pill done">winnaar · ${r.laps} rondes</span>` : `<span class="pill done">binnen · wacht op start</span>`;
     case "running": return `<div class="prog"><div class="bar"><i style="width:${(r.progress * 100).toFixed(1)}%"></i></div><em${r.eta != null ? ` title="Geschatte resterende tijd op huidig tempo"` : ""}>${Math.round(r.progress * 100)}%${r.eta != null ? ` · nog ${mmss(r.eta)}` : ""}</em></div>`;
     case "camp": return r.back != null
       ? `<span class="pill camp">teruggekeerd na ${km(r.back)} km</span>`
@@ -653,11 +675,11 @@ function fieldLaps() {
 }
 const median = a => a.length ? (a.length % 2 ? a[(a.length - 1) / 2] : (a[a.length / 2 - 1] + a[a.length / 2]) / 2) : null;
 // de huidige ronde loopt nog: alleen de snelsten zijn binnen, dus geen mediaan
-const lapMedian = (field, lap) => lap === D.currentLap ? null : median(field.get(lap) || []);
+const lapMedian = (field, lap) => lap === D.currentLap && !D.finished ? null : median(field.get(lap) || []);
 // Hoeveel lopers liepen deze ronde? Iedereen start tegelijk, dus wie al binnen
 // is, heeft zijn plaats; in de huidige ronde tellen ook de lopers onderweg mee.
 const IN_LAP = ["done", "running", "start", "unknown"];
-const lapField = (field, lap) => lap === D.currentLap
+const lapField = (field, lap) => lap === D.currentLap && !D.finished
   ? D.runners.filter(r => IN_LAP.includes(r.state)).length
   : (field.get(lap) || []).length;
 const hm = s => { s = Math.round(s / 60); return `${Math.floor(s / 60)}u ${String(s % 60).padStart(2, "0")}m`; };
@@ -834,7 +856,7 @@ function dropStats() {
       (r.state === "out" && r.outLap === k) || (k === cur && r.state === "camp"));
     const running = k === cur ? field.filter(r => ["running", "start", "unknown"].includes(r.state)) : [];
     laps.push({ lap: k, finished: finished.length, running: running.length, out,
-                started: finished.length + running.length + out.length, current: k === cur });
+                started: finished.length + running.length + out.length, current: k === cur && !D.finished });
   }
   return { starters: field.length, laps };
 }
@@ -935,7 +957,7 @@ function renderDrops() {
   const done = laps.filter(l => !l.current);
   const worst = done.reduce((a, b) => b.out.length > (a?.out.length ?? 0) ? b : a, null);
   const alive = laps.at(-1).finished + laps.at(-1).running;
-  $("dropsNote").textContent = `${starters} gestart · ${alive} nog in de race` +
+  $("dropsNote").textContent = `${starters} gestart · ${D.finished ? `gewonnen na ${laps.length} rondes` : `${alive} nog in de race`}` +
     (worst?.out.length ? ` · meeste uitval in ronde ${worst.lap} (${worst.out.length})` : "");
 
   $("dropsTable").innerHTML = `<table><thead><tr><th class="num">Ronde</th><th class="num">Gestart</th>
